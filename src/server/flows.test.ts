@@ -9,7 +9,7 @@ import { addPayment, assignPayment, unmatchedPayments } from './payments'
 import { createPurchase, deletePurchase, getPurchase, listPurchases, updatePurchase } from './purchases'
 import { monthLog, monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
-import { listStock, returnToStock, takeFromStock } from './stock'
+import { billStockUse, listStock, returnToStock, takeFromStock } from './stock'
 import { addTrip } from './trips'
 import { commitImport } from './import'
 import { handleStripeEvent, invoiceItems, type StripeApi } from './stripe'
@@ -141,7 +141,7 @@ describe('purchases', () => {
 })
 
 describe('stock', () => {
-  it('splits stock onto a job by quantity and counts it the year it’s used', async () => {
+  it('puts stock on a job by quantity, keeps the receipt as entered, and counts it the year it’s used', async () => {
     const job = await newJob('Turbo-back exhaust', '2025-12-01')
     const p = await createPurchase(db, {
       purchasedOn: '2025-12-10', vendor: 'Vibrant', shippingCents: 3000,
@@ -152,21 +152,24 @@ describe('stock', () => {
     })
     expect(await listPurchases(db, { needsHome: true })).toHaveLength(0)
     const [bends] = await listStock(db)
-    expect(bends).toMatchObject({ partNumber: '13050', quantityHundredths: 1000, allocatedCents: 22000 })
+    expect(bends).toMatchObject({ key: 'p:13050', partNumber: '13050', quantityHundredths: 1000, allocatedCents: 22000 })
 
-    await expect(takeFromStock(db, bends.id, { jobId: job.id, quantityHundredths: 1100, usedOn: '2026-01-05' }))
+    await expect(takeFromStock(db, bends.key, { jobId: job.id, quantityHundredths: 1100, usedOn: '2026-01-05' }))
       .rejects.toThrow('Only 10 in stock')
-    const usedId = await takeFromStock(db, bends.id, {
+    await takeFromStock(db, bends.key, {
       jobId: job.id, quantityHundredths: 400, usedOn: '2026-01-05',
       bill: { amountCents: 11000, description: '3in mandrel bends' },
     })
+    // The purchase still shows the two lines it was entered with.
     const d = (await getPurchase(db, p.id))!
     expect(d.totalCents).toBe(33000)
-    expect(d.lines.map((l) => [l.line.quantityHundredths, l.line.stock, l.allocatedCents]))
-      .toEqual([[100, false, 11000], [600, true, 13200], [400, false, 8800]])
+    expect(d.lines.map((l) => [l.line.quantityHundredths, l.line.stock, l.allocatedCents, l.uses.length]))
+      .toEqual([[100, false, 11000, 0], [1000, true, 22000, 1]])
     const jd = (await getJobDetail(db, job.id))!
-    expect(jd.totals.costCents).toBe(19800)
-    expect(jd.lines.map((l) => [l.description, l.amountCents, l.purchaseLineId])).toEqual([['3in mandrel bends', 11000, usedId]])
+    expect(jd.totals.costCents).toBe(11000 + 8800)
+    expect(jd.lines.map((l) => [l.description, l.amountCents, l.partNumber])).toEqual([['3in mandrel bends', 11000, '13050']])
+    expect(jd.costs.find((c) => c.useId != null)).toMatchObject({ jobLineId: jd.lines[0].id, allocatedCents: 8800, quantityHundredths: 400 })
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 600, allocatedCents: 13200 })
 
     // Bought in 2025: the clamp is a 2025 cost; the bends are inventory at
     // the end of 2025 and the four used count in 2026.
@@ -177,14 +180,52 @@ describe('stock', () => {
     expect((await monthlyReport(db, 2025)).rows[11]).toMatchObject({ cogsCents: 11000, stockCents: 13200 })
     expect((await monthlyReport(db, 2026)).rows[0]).toMatchObject({ cogsCents: 8800 })
 
-    // Back to stock: off the invoice, merged into what was left.
-    await returnToStock(db, usedId)
-    const back = (await getPurchase(db, p.id))!
-    expect(back.lines.map((l) => [l.line.quantityHundredths, l.line.amountCents, l.line.stock]))
-      .toEqual([[100, 10000, false], [1000, 20000, true]])
+    // Used stock has to stay stock, and can't drop below what's used.
+    const edit = (qty: number, kind: 'stock' | 'none') => updatePurchase(db, p.id, {
+      purchasedOn: '2025-12-10', vendor: 'Vibrant', shippingCents: 3000,
+      lines: d.lines.map(({ line }) => ({
+        id: line.id, description: line.description, partNumber: line.partNumber, amountCents: line.amountCents,
+        quantityHundredths: line.stock ? qty : line.quantityHundredths,
+        target: line.stock ? { kind } : { kind: 'job' as const, jobId: job.id },
+      })),
+    })
+    await expect(edit(300, 'stock')).rejects.toThrow('the quantity can’t be less')
+    await expect(edit(1000, 'none')).rejects.toThrow('has to stay Stock')
+    await edit(1200, 'stock')
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 800 })
+
+    // Back to stock: off the invoice and the job.
+    await returnToStock(db, { jobLineId: jd.lines[0].id })
     const after = (await getJobDetail(db, job.id))!
     expect(after.lines).toHaveLength(0)
     expect(after.totals.costCents).toBe(11000)
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 1200, allocatedCents: 22000 })
+  })
+
+  it('groups the same part from different receipts and takes the oldest first', async () => {
+    const job = await newJob()
+    const buy = (purchasedOn: string, partNumber: string, qty: number, cents: number) => createPurchase(db, {
+      purchasedOn, vendor: 'Stainless Bros',
+      lines: [{ description: '2.5in 90 elbow', partNumber, quantityHundredths: qty, amountCents: cents, target: { kind: 'stock' } }],
+    })
+    await buy('2026-09-01', 'SB-90', 200, 4000)
+    await buy('2026-10-01', 'sb-90 ', 500, 12500)
+    const stock = await listStock(db)
+    expect(stock).toHaveLength(1)
+    expect(stock[0]).toMatchObject({ quantityHundredths: 700, allocatedCents: 16500 })
+    expect(stock[0].lots.map((l) => l.purchasedOn)).toEqual(['2026-09-01', '2026-10-01'])
+
+    // 3 elbows: both from September at $20, one from October at $25.
+    await takeFromStock(db, stock[0].key, { jobId: job.id, quantityHundredths: 300, usedOn: '2026-10-20' })
+    const jd = (await getJobDetail(db, job.id))!
+    expect(jd.totals.costCents).toBe(6500)
+    const unbilled = jd.costs.filter((c) => c.jobLineId == null)
+    expect(unbilled).toHaveLength(2)
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 400, allocatedCents: 10000 })
+
+    // Billing a use that isn't on the invoice yet.
+    await billStockUse(db, unbilled[0].useId!, 5000, 'Elbows')
+    expect((await getJobDetail(db, job.id))!.costs.filter((c) => c.jobLineId != null)).toHaveLength(1)
   })
 })
 

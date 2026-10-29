@@ -1,10 +1,10 @@
 import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, max, or, type SQL } from 'drizzle-orm'
 import type { Db } from '@/db'
 import {
-  assets, categories, customers, files, jobLines, jobs, purchaseLines, purchases,
+  assets, categories, customers, files, jobLines, jobs, purchaseLines, purchases, stockUses,
   type Category, type PurchaseLine,
 } from '@/db/schema'
-import { allocate } from '@/lib/money'
+import { allocate, formatQuantity } from '@/lib/money'
 import { deleteObjectsFor } from './files'
 import { refreshJobStatus } from './jobs'
 
@@ -90,6 +90,19 @@ async function writeLines(db: Db, purchaseId: number, input: PurchaseInput, exis
   const kept = new Set<number>()
   const touchedJobs = new Set<number>()
   for (const j of existing) if (j.jobId) touchedJobs.add(j.jobId)
+  const used = await usedByLine(db, existing.map((e) => e.id))
+
+  // Stock already put on jobs has to stay stock, and stay at least that many.
+  for (const e of existing) {
+    const u = used.get(e.id)
+    if (!u) continue
+    const l = input.lines.find((x) => x.id === e.id)
+    const name = e.description || 'a stock line'
+    const what = `${formatQuantity(u)} of ${name}`
+    if (!l) throw new Error(`${what} went on jobs. Put it back in stock before removing the line.`)
+    if (l.target.kind !== 'stock') throw new Error(`${what} went on jobs, so it has to stay Stock.`)
+    if ((l.quantityHundredths ?? 100) < u) throw new Error(`${what} already went on jobs; the quantity can’t be less.`)
+  }
 
   for (const [i, l] of input.lines.entries()) {
     const prev = l.id ? existing.find((e) => e.id === l.id) : undefined
@@ -120,8 +133,6 @@ async function writeLines(db: Db, purchaseId: number, input: PurchaseInput, exis
       categoryId: l.target.kind === 'category' ? l.target.categoryId : null,
       assetId,
       stock: l.target.kind === 'stock',
-      // Moving a line from stock to another job keeps the day it was used.
-      usedOn: l.target.kind === 'job' ? prev?.usedOn ?? null : null,
       payee: l.payee?.trim() || null,
       sortOrder: i,
     }
@@ -162,8 +173,19 @@ async function writeLines(db: Db, purchaseId: number, input: PurchaseInput, exis
   for (const jobId of touchedJobs) await refreshJobStatus(db, jobId)
 }
 
+// Quantity of each stock line that's gone on jobs.
+async function usedByLine(db: Db, lineIds: number[]) {
+  const out = new Map<number, number>()
+  if (lineIds.length === 0) return out
+  for (const u of await db.select().from(stockUses).where(inArray(stockUses.purchaseLineId, lineIds))) {
+    out.set(u.purchaseLineId, (out.get(u.purchaseLineId) ?? 0) + u.quantityHundredths)
+  }
+  return out
+}
+
 export async function deletePurchase(db: Db, id: number) {
   const lines = await db.select().from(purchaseLines).where(eq(purchaseLines.purchaseId, id))
+  const uses = lines.length ? await db.select().from(stockUses).where(inArray(stockUses.purchaseLineId, lines.map((l) => l.id))) : []
   await deleteObjectsFor(db, { purchaseId: id })
   await db.transaction(async (tx) => {
     const t = tx as unknown as Db
@@ -171,7 +193,7 @@ export async function deletePurchase(db: Db, id: number) {
     if (assetIds.length) await t.delete(assets).where(inArray(assets.id, assetIds))
     await t.delete(purchases).where(eq(purchases.id, id))
   })
-  for (const jobId of new Set(lines.map((l) => l.jobId).filter((x): x is number => x != null))) {
+  for (const jobId of new Set([...lines.map((l) => l.jobId), ...uses.map((u) => u.jobId)].filter((x): x is number => x != null))) {
     await refreshJobStatus(db, jobId)
   }
 }
@@ -190,6 +212,10 @@ export async function getPurchase(db: Db, id: number) {
   const billed = lines.length
     ? await db.select().from(jobLines).where(inArray(jobLines.purchaseLineId, lines.map((l) => l.line.id)))
     : []
+  const uses = lines.length
+    ? await db.select({ use: stockUses, job: jobs }).from(stockUses).innerJoin(jobs, eq(jobs.id, stockUses.jobId))
+      .where(inArray(stockUses.purchaseLineId, lines.map((l) => l.line.id))).orderBy(asc(stockUses.usedOn), asc(stockUses.id))
+    : []
   const attachments = await db.select().from(files).where(eq(files.purchaseId, id)).orderBy(asc(files.id))
   const alloc = allocate(lines.map((l) => l.line.amountCents), p.taxCents + p.shippingCents)
   return {
@@ -198,6 +224,7 @@ export async function getPurchase(db: Db, id: number) {
       ...l,
       allocatedCents: alloc[i],
       billed: billed.filter((b) => b.purchaseLineId === l.line.id),
+      uses: uses.filter((u) => u.use.purchaseLineId === l.line.id),
     })),
     files: attachments,
     totalCents: lines.reduce((a, l) => a + l.line.amountCents, 0) + p.taxCents + p.shippingCents,

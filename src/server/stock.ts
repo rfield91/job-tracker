@@ -1,25 +1,82 @@
-import { and, eq, isNull } from 'drizzle-orm'
+import { eq, inArray } from 'drizzle-orm'
 import type { Db } from '@/db'
-import { jobLines, purchaseLines } from '@/db/schema'
+import { jobLines, stockUses } from '@/db/schema'
 import { formatQuantity } from '@/lib/money'
 import { allocatedLines } from './ledger'
 import { addJobLine, refreshJobStatus } from './jobs'
 
 // Materials bought ahead (tubing, bends, flanges) sit on purchase lines marked
-// stock. Using some on a job splits the line, so the receipt, its shipping
-// share and the purchase date stay with the cost.
+// stock. Using some on a job records a stock use; the purchase line stays as
+// entered, and the ledger shares its cost (with tax and shipping) by quantity.
+// The same part bought on different receipts is one item here, taken oldest
+// first.
 
-export async function listStock(db: Db) {
-  const lines = await allocatedLines(db, { stockOrigin: true })
-  return lines
-    .filter((l) => l.stock)
-    .sort((a, b) => (a.description ?? a.purchase.vendor).localeCompare(b.description ?? b.purchase.vendor)
-      || b.purchase.purchasedOn.localeCompare(a.purchase.purchasedOn))
+export type StockLot = {
+  lineId: number
+  purchaseId: number
+  vendor: string
+  purchasedOn: string
+  quantityHundredths: number
+  // Cost of what's left on this line, with its share of tax and shipping.
+  allocatedCents: number
 }
 
-export type StockItem = Awaited<ReturnType<typeof listStock>>[number]
+export type StockGroup = {
+  key: string
+  label: string
+  partNumber: string | null
+  quantityHundredths: number
+  allocatedCents: number
+  lots: StockLot[]
+}
 
-export async function takeFromStock(db: Db, lineId: number, input: {
+// Same part number, or with none, the same description.
+export function stockKey(l: { partNumber: string | null; description: string | null }, vendor: string) {
+  const pn = l.partNumber?.trim()
+  return pn ? `p:${pn.toUpperCase()}` : `d:${(l.description || vendor).trim().toLowerCase()}`
+}
+
+export async function listStock(db: Db): Promise<StockGroup[]> {
+  const pieces = (await allocatedLines(db, { stockOrigin: true }))
+    .filter((l) => l.stock && l.quantityHundredths > 0)
+    .sort((a, b) => a.purchase.purchasedOn.localeCompare(b.purchase.purchasedOn) || a.id - b.id)
+  const groups = new Map<string, StockGroup>()
+  for (const l of pieces) {
+    const key = stockKey(l, l.purchase.vendor)
+    const g = groups.get(key) ?? {
+      key, label: '', partNumber: l.partNumber?.trim() || null, quantityHundredths: 0, allocatedCents: 0, lots: [],
+    }
+    // Newest receipt names the item.
+    g.label = l.description || l.purchase.vendor
+    g.quantityHundredths += l.quantityHundredths
+    g.allocatedCents += l.allocatedCents
+    g.lots.push({
+      lineId: l.id,
+      purchaseId: l.purchaseId,
+      vendor: l.purchase.vendor,
+      purchasedOn: l.purchase.purchasedOn,
+      quantityHundredths: l.quantityHundredths,
+      allocatedCents: l.allocatedCents,
+    })
+    groups.set(key, g)
+  }
+  return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label))
+}
+
+// Oldest lots first: how much comes off each, and what it costs.
+export function takeFifo(lots: StockLot[], quantityHundredths: number) {
+  let need = quantityHundredths
+  const out: { lot: StockLot; quantityHundredths: number; costCents: number }[] = []
+  for (const lot of lots) {
+    if (need <= 0) break
+    const q = Math.min(need, lot.quantityHundredths)
+    out.push({ lot, quantityHundredths: q, costCents: Math.round((lot.allocatedCents * q) / lot.quantityHundredths) })
+    need -= q
+  }
+  return out
+}
+
+export async function takeFromStock(db: Db, key: string, input: {
   jobId: number
   quantityHundredths: number
   usedOn: string
@@ -28,82 +85,51 @@ export async function takeFromStock(db: Db, lineId: number, input: {
 }) {
   return db.transaction(async (tx) => {
     const t = tx as unknown as Db
-    const [l] = await t.select().from(purchaseLines).where(eq(purchaseLines.id, lineId))
-    if (!l?.stock) throw new Error('That isn’t in stock any more')
+    const group = (await listStock(t)).find((g) => g.key === key)
+    if (!group) throw new Error('That isn’t in stock any more')
     const qty = input.quantityHundredths
     if (qty <= 0) throw new Error('Quantity must be more than 0')
-    if (qty > l.quantityHundredths) throw new Error(`Only ${formatQuantity(l.quantityHundredths)} in stock`)
+    if (qty > group.quantityHundredths) throw new Error(`Only ${formatQuantity(group.quantityHundredths)} in stock`)
 
-    let usedId = l.id
-    if (qty === l.quantityHundredths) {
-      await t.update(purchaseLines).set({ stock: false, jobId: input.jobId, usedOn: input.usedOn })
-        .where(eq(purchaseLines.id, l.id))
-    } else {
-      const amountCents = Math.round((l.amountCents * qty) / l.quantityHundredths)
-      await t.update(purchaseLines).set({
-        quantityHundredths: l.quantityHundredths - qty,
-        amountCents: l.amountCents - amountCents,
-      }).where(eq(purchaseLines.id, l.id))
-      const [used] = await t.insert(purchaseLines).values({
-        purchaseId: l.purchaseId,
-        description: l.description,
-        partNumber: l.partNumber,
-        quantityHundredths: qty,
-        amountCents,
-        jobId: input.jobId,
-        usedOn: input.usedOn,
-        sortOrder: l.sortOrder,
-      }).returning()
-      usedId = used.id
-    }
+    const uses = await t.insert(stockUses).values(takeFifo(group.lots, qty).map((p) => ({
+      purchaseLineId: p.lot.lineId,
+      jobId: input.jobId,
+      quantityHundredths: p.quantityHundredths,
+      usedOn: input.usedOn,
+    }))).returning()
     if (input.bill) {
-      await addJobLine(t, input.jobId, {
+      const line = await addJobLine(t, input.jobId, {
         type: 'part',
-        description: input.bill.description || l.description || 'Part',
+        description: input.bill.description || group.label,
+        partNumber: group.partNumber,
         amountCents: input.bill.amountCents,
-        purchaseLineId: usedId,
       })
+      await t.update(stockUses).set({ jobLineId: line.id }).where(inArray(stockUses.id, uses.map((u) => u.id)))
     } else {
       await refreshJobStatus(t, input.jobId)
     }
-    return usedId
+    return uses
   })
 }
 
-// Undoes takeFromStock: takes the cost (and any invoice line for it) off the job
-// and puts it back on the shelf, merged into what's left of the same item.
-export async function returnToStock(db: Db, lineId: number) {
+// Undoes takeFromStock: one use (a cost not on the invoice), or everything
+// billed on an invoice line along with the line.
+export async function returnToStock(db: Db, target: { useId: number } | { jobLineId: number }) {
   return db.transaction(async (tx) => {
     const t = tx as unknown as Db
-    const [l] = await t.select().from(purchaseLines).where(eq(purchaseLines.id, lineId))
-    if (!l?.usedOn) throw new Error('That cost didn’t come from stock')
-    await t.delete(jobLines).where(eq(jobLines.purchaseLineId, l.id))
-    const [rest] = await t.select().from(purchaseLines).where(and(
-      eq(purchaseLines.purchaseId, l.purchaseId),
-      eq(purchaseLines.stock, true),
-      l.description == null ? isNull(purchaseLines.description) : eq(purchaseLines.description, l.description),
-      l.partNumber == null ? isNull(purchaseLines.partNumber) : eq(purchaseLines.partNumber, l.partNumber),
-    ))
-    if (rest) {
-      await t.update(purchaseLines).set({
-        quantityHundredths: rest.quantityHundredths + l.quantityHundredths,
-        amountCents: rest.amountCents + l.amountCents,
-      }).where(eq(purchaseLines.id, rest.id))
-      await t.delete(purchaseLines).where(eq(purchaseLines.id, l.id))
-    } else {
-      await t.update(purchaseLines).set({ stock: true, jobId: null, usedOn: null }).where(eq(purchaseLines.id, l.id))
-    }
-    if (l.jobId) await refreshJobStatus(t, l.jobId)
+    const where = 'useId' in target ? eq(stockUses.id, target.useId) : eq(stockUses.jobLineId, target.jobLineId)
+    const removed = await t.delete(stockUses).where(where).returning()
+    if (removed.length === 0) throw new Error('That cost didn’t come from stock')
+    if ('jobLineId' in target) await t.delete(jobLines).where(eq(jobLines.id, target.jobLineId))
+    await refreshJobStatus(t, removed[0].jobId)
   })
 }
 
-export function toStockOption(s: StockItem) {
-  return {
-    id: s.id,
-    label: s.description || s.purchase.vendor,
-    partNumber: s.partNumber,
-    quantityHundredths: s.quantityHundredths,
-    allocatedCents: s.allocatedCents,
-    vendor: s.purchase.vendor,
-  }
+// Puts a stock use that's on the job but not the invoice onto the invoice.
+export async function billStockUse(db: Db, useId: number, billedCents: number, description: string) {
+  const [use] = await db.select().from(stockUses).where(eq(stockUses.id, useId))
+  if (!use) throw new Error('That stock use is gone')
+  const line = await addJobLine(db, use.jobId, { type: 'part', description, amountCents: billedCents })
+  await db.update(stockUses).set({ jobLineId: line.id }).where(eq(stockUses.id, useId))
+  return line
 }

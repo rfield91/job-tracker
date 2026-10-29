@@ -3,7 +3,7 @@ import { Card, CardHeader, Empty, LinkButton, Money, PageHeader } from '@/compon
 import { authedDb } from '@/server/session'
 import { jobOptions } from '@/server/pickers'
 import { getSettings, today } from '@/server/settings'
-import { listStock, toStockOption } from '@/server/stock'
+import { listStock } from '@/server/stock'
 import { StockRow } from './stock-row'
 
 export const metadata = { title: 'Stock' }
@@ -28,15 +28,7 @@ export default async function StockPage() {
         ) : (
           <div className="divide-y divide-line border-t border-line">
             {items.map((i) => (
-              <StockRow
-                key={i.id}
-                item={toStockOption(i)}
-                purchaseId={i.purchaseId}
-                purchasedOn={i.purchase.purchasedOn}
-                jobs={jobs}
-                today={now}
-                markupPct={s.partsMarkupPct}
-              />
+              <StockRow key={i.key} item={i} jobs={jobs} today={now} markupPct={s.partsMarkupPct} />
             ))}
           </div>
         )}

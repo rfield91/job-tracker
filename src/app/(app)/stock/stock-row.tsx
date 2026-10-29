@@ -8,16 +8,14 @@ import { formatDate } from '@/lib/dates'
 import { formatMoney, formatQuantity } from '@/lib/money'
 import type { JobOption } from '@/server/pickers'
 
-export function StockRow({ item, purchaseId, purchasedOn, jobs, today, markupPct }: {
+export function StockRow({ item, jobs, today, markupPct }: {
   item: StockOption
-  purchaseId: number
-  purchasedOn: string
   jobs: JobOption[]
   today: string
   markupPct: number
 }) {
   const [open, setOpen] = useState(false)
-  const each = Math.round((item.allocatedCents * 100) / item.quantityHundredths)
+  const each = (cents: number, qty: number) => formatMoney(Math.round((cents * 100) / qty))
   return (
     <div className="px-4 py-2.5">
       <div className="flex items-center gap-3">
@@ -27,9 +25,12 @@ export function StockRow({ item, purchaseId, purchasedOn, jobs, today, markupPct
             {item.label}
             {item.partNumber && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{item.partNumber}</span>}
           </span>
-          <Link href={`/purchases/${purchaseId}`} className="block text-xs text-fg-subtle hover:underline">
-            {item.vendor} · {formatDate(purchasedOn)}{item.quantityHundredths !== 100 && ` · ${formatMoney(each)} each`}
-          </Link>
+          {item.lots.map((lot) => (
+            <Link key={lot.lineId} href={`/purchases/${lot.purchaseId}`} className="block text-xs text-fg-subtle hover:underline">
+              {item.lots.length > 1 && `${formatQuantity(lot.quantityHundredths)} from `}
+              {lot.vendor} · {formatDate(lot.purchasedOn)} · {each(lot.allocatedCents, lot.quantityHundredths)} each
+            </Link>
+          ))}
         </span>
         <Money cents={item.allocatedCents} className="text-sm" />
         {!open && <Button size="sm" onClick={() => setOpen(true)}>Use</Button>}
@@ -37,6 +38,7 @@ export function StockRow({ item, purchaseId, purchasedOn, jobs, today, markupPct
       {open && (
         <div className="mt-3 rounded-lg border border-line bg-raised p-3">
           <UseStockForm items={[item]} jobs={jobs} today={today} markupPct={markupPct} onDone={() => setOpen(false)} />
+          {item.lots.length > 1 && <div className="mt-2 text-xs text-fg-subtle">Takes from the oldest receipt first.</div>}
         </div>
       )}
     </div>

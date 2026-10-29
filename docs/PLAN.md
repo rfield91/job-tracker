@@ -46,8 +46,11 @@ instructions once.
   welding gas, software, insurance, etc. go on their own expense lines.
 - **Consumables** (brake clean, rags, welding gas and wire, discs) are
   shop supplies when bought. **Materials bought ahead** (tubing, bends,
-  flanges) are stock: a purchase line marked stock, moved onto a job (all
-  or part, by quantity) when used. Stock costs count on the day they're used,
+  flanges) are stock: a purchase line marked stock. Using some records a
+  stock use (job, quantity, date); the purchase line stays as entered and
+  its cost is shared by quantity. The same part number bought on different
+  receipts is one stock item, used oldest first. Stock costs count on the
+  day they're used,
   and the tax worksheet reports what's on the shelf at each year end as
   beginning and ending inventory (Part III lines 35 and 41).
 - **Equipment** (this year: lathe, bandsaw, welder) is tracked as assets,

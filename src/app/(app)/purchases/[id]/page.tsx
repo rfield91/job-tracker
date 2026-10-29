@@ -39,7 +39,7 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
       {sp.saved && <Notice tone="good">Saved.</Notice>}
       <Card>
         <div className="divide-y divide-line">
-          {d.lines.map(({ line, job, category, asset, allocatedCents, billed }) => (
+          {d.lines.map(({ line, job, category, asset, allocatedCents, billed, uses }) => (
             <div key={line.id} className="flex items-start gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm">
@@ -48,17 +48,23 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
                   {line.partNumber && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{line.partNumber}</span>}
                 </div>
                 <div className="mt-0.5 text-xs text-fg-muted">
-                  {job ? <>
-                    <Link href={`/jobs/${job.id}`} className="hover:underline">Job #{jobNumber(job)} {job.title}</Link>
-                    {line.usedOn && <> · from stock {formatDate(line.usedOn, { year: false })}</>}
-                  </>
-                    : line.stock ? <Link href="/stock" className="hover:underline">In stock</Link>
+                  {job ? <Link href={`/jobs/${job.id}`} className="hover:underline">Job #{jobNumber(job)} {job.title}</Link>
+                    : line.stock ? (
+                      <Link href="/stock" className="hover:underline">
+                        Stock{uses.length > 0 && ` · ${formatQuantity(line.quantityHundredths - uses.reduce((a, u) => a + u.use.quantityHundredths, 0))} left`}
+                      </Link>
+                    )
                     : category ? <>{category.name} <span className="text-fg-subtle">· Schedule C {category.scheduleLine}, {lineLabel(category.scheduleLine)}</span></>
                     : asset ? <Link href="/equipment" className="hover:underline">Equipment · {asset.businessUsePct}% business use</Link>
                     : <Badge tone="warn">Needs a job or category</Badge>}
                   {line.payee && <> · paid to {line.payee}</>}
                   {billed.length > 0 && <> · billed {formatMoney(billed.reduce((a, b) => a + b.amountCents, 0))}</>}
                 </div>
+                {uses.map(({ use, job: j }) => (
+                  <div key={use.id} className="text-xs text-fg-subtle">
+                    {formatQuantity(use.quantityHundredths)} used on <Link href={`/jobs/${j.id}`} className="hover:underline">#{jobNumber(j)} {j.title}</Link> · {formatDate(use.usedOn, { year: false })}
+                  </div>
+                ))}
               </div>
               <div className="text-right text-sm">
                 <Money cents={line.amountCents} />

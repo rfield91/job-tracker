@@ -1,12 +1,21 @@
-import { and, asc, gte, inArray, isNotNull, lte, or, type SQL } from 'drizzle-orm'
+import { and, asc, eq, gte, inArray, lte, or, type SQL } from 'drizzle-orm'
 import type { Db } from '@/db'
-import { purchaseLines, purchases, type Purchase, type PurchaseLine } from '@/db/schema'
+import { purchaseLines, purchases, stockUses, type Purchase, type PurchaseLine, type StockUse } from '@/db/schema'
 import { allocate } from '@/lib/money'
 
 export type AllocatedLine = PurchaseLine & {
   // Line amount plus its share of the receipt's tax and shipping.
   allocatedCents: number
   purchase: Purchase
+  // Stock lines come out in pieces: one per use on a job (with useId, jobId
+  // and usedOn set) and what's still on the shelf (stock true). The others
+  // come out whole.
+  useId: number | null
+  usedOn: string | null
+  // For a use: the invoice line it's billed on.
+  jobLineId: number | null
+  // Unique across pieces (id is the purchase line's, shared by them).
+  key: string
 }
 
 // The day a cost counts: the purchase date, or for materials taken from
@@ -17,7 +26,7 @@ export function costDate(l: AllocatedLine) {
 
 // Purchase lines with tax and shipping spread in. Allocation needs every line
 // of a receipt, so this always loads whole purchases and filters afterwards.
-// A from/to range matches each line's costDate, or with dateBy 'purchase',
+// A from/to range matches each piece's costDate, or with dateBy 'purchase',
 // the receipt's date.
 export async function allocatedLines(
   db: Db,
@@ -27,15 +36,17 @@ export async function allocatedLines(
   } = {},
 ): Promise<AllocatedLine[]> {
   let ids: number[] | undefined = filter.purchaseIds
+  const usePurchases = (where: SQL) => db.select({ id: purchaseLines.purchaseId }).from(stockUses)
+    .innerJoin(purchaseLines, eq(purchaseLines.id, stockUses.purchaseLineId)).where(where)
   if (filter.jobIds) {
     if (filter.jobIds.length === 0) return []
-    const rows = await db.selectDistinct({ id: purchaseLines.purchaseId }).from(purchaseLines)
+    const direct = await db.selectDistinct({ id: purchaseLines.purchaseId }).from(purchaseLines)
       .where(inArray(purchaseLines.jobId, filter.jobIds))
-    ids = rows.map((r) => r.id)
+    const used = await usePurchases(inArray(stockUses.jobId, filter.jobIds))
+    ids = [...new Set([...direct, ...used].map((r) => r.id))]
   }
   if (filter.stockOrigin) {
-    const rows = await db.selectDistinct({ id: purchaseLines.purchaseId }).from(purchaseLines)
-      .where(or(purchaseLines.stock, isNotNull(purchaseLines.usedOn)))
+    const rows = await db.selectDistinct({ id: purchaseLines.purchaseId }).from(purchaseLines).where(eq(purchaseLines.stock, true))
     const stockIds = rows.map((r) => r.id)
     ids = ids ? ids.filter((id) => stockIds.includes(id)) : stockIds
   }
@@ -45,13 +56,13 @@ export async function allocatedLines(
     where.push(inArray(purchases.id, ids))
   }
   if (filter.from || filter.to) {
-    const range = (col: typeof purchases.purchasedOn | typeof purchaseLines.usedOn) => and(
+    const range = (col: typeof purchases.purchasedOn | typeof stockUses.usedOn) => and(
       filter.from ? gte(col, filter.from) : undefined,
       filter.to ? lte(col, filter.to) : undefined,
-    )
-    where.push(filter.dateBy === 'purchase' ? range(purchases.purchasedOn)! : or(
+    )!
+    where.push(filter.dateBy === 'purchase' ? range(purchases.purchasedOn) : or(
       range(purchases.purchasedOn),
-      inArray(purchases.id, db.select({ id: purchaseLines.purchaseId }).from(purchaseLines).where(range(purchaseLines.usedOn))),
+      inArray(purchases.id, usePurchases(range(stockUses.usedOn))),
     )!)
   }
 
@@ -60,6 +71,11 @@ export async function allocatedLines(
   const lines = await db.select().from(purchaseLines)
     .where(inArray(purchaseLines.purchaseId, ps.map((p) => p.id)))
     .orderBy(asc(purchaseLines.sortOrder), asc(purchaseLines.id))
+  const stockIds = lines.filter((l) => l.stock).map((l) => l.id)
+  const uses = stockIds.length
+    ? await db.select().from(stockUses).where(inArray(stockUses.purchaseLineId, stockIds))
+      .orderBy(asc(stockUses.usedOn), asc(stockUses.id))
+    : []
 
   const byPurchase = new Map<number, PurchaseLine[]>()
   for (const l of lines) {
@@ -71,14 +87,52 @@ export async function allocatedLines(
   for (const p of ps) {
     const ls = byPurchase.get(p.id) ?? []
     const alloc = allocate(ls.map((l) => l.amountCents), p.taxCents + p.shippingCents)
-    ls.forEach((l, i) => out.push({ ...l, allocatedCents: alloc[i], purchase: p }))
+    ls.forEach((l, i) => {
+      const whole = { ...l, allocatedCents: alloc[i], purchase: p, useId: null, usedOn: null, jobLineId: null, key: `l${l.id}` }
+      if (!l.stock) out.push(whole)
+      else out.push(...splitStock(whole, uses.filter((u) => u.purchaseLineId === l.id)))
+    })
   }
   if (filter.jobIds) out = out.filter((l) => l.jobId != null && filter.jobIds!.includes(l.jobId))
-  if (filter.stockOrigin) out = out.filter((l) => l.stock || l.usedOn != null)
+  if (filter.stockOrigin) out = out.filter((l) => l.stock || l.useId != null)
   const day = filter.dateBy === 'purchase' ? (l: AllocatedLine) => l.purchase.purchasedOn : costDate
   if (filter.from) out = out.filter((l) => day(l) >= filter.from!)
   if (filter.to) out = out.filter((l) => day(l) <= filter.to!)
   return out
+}
+
+// A stock line as one piece per use plus what's left on the shelf, with the
+// cost shared by quantity so the pieces add up to the line exactly.
+function splitStock(line: AllocatedLine, uses: StockUse[]): AllocatedLine[] {
+  const usedQty = uses.reduce((a, u) => a + u.quantityHundredths, 0)
+  const left = Math.max(0, line.quantityHundredths - usedQty)
+  const shelf = left > 0 || uses.length === 0
+  const qtys = [...uses.map((u) => u.quantityHundredths), ...(shelf ? [left] : [])]
+  const total = qtys.reduce((a, q) => a + q, 0)
+  const amounts = split(line.amountCents, qtys, total)
+  const shares = split(line.allocatedCents, qtys, total)
+  const pieces: AllocatedLine[] = uses.map((u, i) => ({
+    ...line,
+    stock: false,
+    jobId: u.jobId,
+    quantityHundredths: u.quantityHundredths,
+    amountCents: amounts[i],
+    allocatedCents: shares[i],
+    useId: u.id,
+    usedOn: u.usedOn,
+    jobLineId: u.jobLineId,
+    key: `u${u.id}`,
+  }))
+  if (shelf) {
+    pieces.push({ ...line, quantityHundredths: left, amountCents: amounts.at(-1)!, allocatedCents: shares.at(-1)!, key: `s${line.id}` })
+  }
+  return pieces
+}
+
+// Shares of cents in proportion to qtys, summing to cents exactly.
+function split(cents: number, qtys: number[], total: number) {
+  if (total === 0) return qtys.map((_, i) => (i === qtys.length - 1 ? cents : 0))
+  return allocate(qtys, cents).map((x, i) => x - qtys[i])
 }
 
 // Materials on the shelf at the end of a day, at cost: bought by then and

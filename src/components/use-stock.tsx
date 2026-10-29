@@ -6,23 +6,29 @@ import { Button, Field, Input, MoneyInput, Select } from './ui'
 import { takeFromStockAction } from '@/app/actions/stock'
 import { formatMoney, formatQuantity, parseQuantity, withMarkup } from '@/lib/money'
 import type { JobOption } from '@/server/pickers'
+import type { StockGroup } from '@/server/stock'
 
-export type StockOption = {
-  id: number
-  label: string
-  partNumber: string | null
-  quantityHundredths: number
-  // Cost of the whole line with its share of tax and shipping.
-  allocatedCents: number
-  vendor: string
-}
+export type StockOption = StockGroup
 
 export function stockOptionLabel(s: StockOption) {
   return `${s.label}${s.partNumber ? ` #${s.partNumber}` : ''} (${formatQuantity(s.quantityHundredths)} left)`
 }
 
-// Puts some or all of a stock item on a job. From the Stock page pass the one
-// item and `jobs` to pick from; from a job pass every item and its `jobId`.
+// What using qty costs, oldest receipts first (mirrors takeFifo on the server).
+function fifoCost(item: StockOption, qty: number) {
+  let need = Math.min(qty, item.quantityHundredths)
+  let cents = 0
+  for (const lot of item.lots) {
+    if (need <= 0) break
+    const q = Math.min(need, lot.quantityHundredths)
+    cents += Math.round((lot.allocatedCents * q) / lot.quantityHundredths)
+    need -= q
+  }
+  return cents
+}
+
+// Puts some of a stock item on a job. From the Stock page pass the one item
+// and `jobs` to pick from; from a job pass every item and its `jobId`.
 export function UseStockForm({ items, jobs, jobId, today, markupPct, onDone }: {
   items: StockOption[]
   jobs?: JobOption[]
@@ -31,28 +37,28 @@ export function UseStockForm({ items, jobs, jobId, today, markupPct, onDone }: {
   markupPct: number
   onDone: () => void
 }) {
-  const [itemId, setItemId] = useState(items.length === 1 ? String(items[0].id) : '')
-  const item = items.find((i) => String(i.id) === itemId)
-  const [qty, setQty] = useState(item ? formatQuantity(item.quantityHundredths) : '')
+  const [key, setKey] = useState(items.length === 1 ? items[0].key : '')
+  const item = items.find((i) => i.key === key)
+  const [qty, setQty] = useState(item ? formatQuantity(Math.min(100, item.quantityHundredths)) : '')
   const [bill, setBill] = useState(true)
   const [billed, setBilled] = useState<string | null>(null)
   const used = parseQuantity(qty)
-  const costCents = item && used != null ? Math.round((item.allocatedCents * Math.min(used, item.quantityHundredths)) / item.quantityHundredths) : null
+  const costCents = item && used != null ? fifoCost(item, used) : null
   const suggested = costCents != null ? (withMarkup(costCents, markupPct) / 100).toFixed(2) : ''
   return (
     <ActionForm action={takeFromStockAction} onSuccess={onDone} className="space-y-3">
       <input type="hidden" name="usedOn" value={today} />
       {jobId != null && <input type="hidden" name="jobId" value={jobId} />}
-      {jobs ? <input type="hidden" name="stockLineId" value={itemId} /> : (
+      {jobs ? <input type="hidden" name="stockKey" value={key} /> : (
         <Field label="From stock">
-          <Select name="stockLineId" value={itemId} required onChange={(e) => {
-            setItemId(e.target.value)
-            const next = items.find((i) => String(i.id) === e.target.value)
-            setQty(next ? formatQuantity(next.quantityHundredths) : '')
+          <Select name="stockKey" value={key} required onChange={(e) => {
+            setKey(e.target.value)
+            const next = items.find((i) => i.key === e.target.value)
+            setQty(next ? formatQuantity(Math.min(100, next.quantityHundredths)) : '')
             setBilled(null)
           }}>
             <option value="">Pick an item…</option>
-            {items.map((i) => <option key={i.id} value={i.id}>{stockOptionLabel(i)}</option>)}
+            {items.map((i) => <option key={i.key} value={i.key}>{stockOptionLabel(i)}</option>)}
           </Select>
         </Field>
       )}

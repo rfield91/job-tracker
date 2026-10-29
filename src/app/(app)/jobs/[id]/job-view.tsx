@@ -12,7 +12,7 @@ import {
   deletePaymentAction, recordPartPurchaseAction, saveTemplateAction, setStatusAction, updateJobAction, updateLineAction, updatePaymentAction,
   uploadJobPhotosAction,
 } from '@/app/actions/jobs'
-import { returnToStockAction } from '@/app/actions/stock'
+import { billStockUseAction, returnToStockAction } from '@/app/actions/stock'
 import { requestPaymentAction, voidRequestAction } from '@/app/actions/stripe'
 import { UseStockForm, type StockOption } from '@/components/use-stock'
 import { formatDate } from '@/lib/dates'
@@ -44,9 +44,14 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   const [editingPayment, setEditingPayment] = useState<number | null>(null)
   const [editingDetails, setEditingDetails] = useState(false)
 
-  const costById = new Map(costs.map((c) => [c.id, c]))
+  // Ordinary costs link to invoice lines by purchase line; stock uses carry
+  // the invoice line they're billed on.
+  const costById = new Map(costs.filter((c) => c.useId == null).map((c) => [c.id, c]))
   const billedCostIds = new Set(lines.map((l) => l.purchaseLineId).filter((x): x is number => x != null))
-  const unbilled = costs.filter((c) => !billedCostIds.has(c.id))
+  const unbilled = costs.filter((c) => (c.useId != null ? c.jobLineId == null : !billedCostIds.has(c.id)))
+  const costsFor = (l: JobLine) => l.purchaseLineId
+    ? [costById.get(l.purchaseLineId)].filter((c) => c != null)
+    : costs.filter((c) => c.useId != null && c.jobLineId === l.id)
   const groups: { title: string; rows: JobLine[] }[] = [
     { title: 'Labor', rows: lines.filter((l) => l.type === 'labor') },
     { title: 'Parts', rows: lines.filter((l) => l.type === 'part') },
@@ -56,7 +61,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   // Quoted parts not bought yet: their expected cost, kept out of the books.
   const estCents = lines.reduce((a, l) => a + (l.purchaseLineId ? 0 : l.estCostCents ?? 0), 0)
   const suggestedPurpose: PaymentPurpose = totals.paidCents === 0 && (job.status === 'quote' || job.status === 'in_progress') ? 'deposit' : 'final'
-  const partNumberOf = (l: JobLine) => l.purchaseLineId ? costById.get(l.purchaseLineId)?.partNumber : l.partNumber
+  const partNumberOf = (l: JobLine) => l.purchaseLineId ? costById.get(l.purchaseLineId)?.partNumber : l.partNumber ?? costsFor(l)[0]?.partNumber
   const vehicleText = vehicle ? [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ') : ''
 
   return (
@@ -136,7 +141,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
           <div key={g.title} className="border-t border-line">
             <div className="px-4 pt-2 text-xs font-medium tracking-wide text-fg-subtle uppercase">{g.title}</div>
             {g.rows.map((l) => editingLine === l.id ? (
-              <LineEditor key={l.id} line={l} today={today} fromStock={Boolean(l.purchaseLineId && costById.get(l.purchaseLineId)?.usedOn)} onDone={() => setEditingLine(null)} />
+              <LineEditor key={l.id} line={l} today={today} fromStock={costsFor(l).some((c) => c.useId != null)} onDone={() => setEditingLine(null)} />
             ) : (
               <button key={l.id} type="button" onClick={() => setEditingLine(l.id)}
                 className="flex w-full items-baseline gap-3 px-4 py-2 text-left hover:bg-hover">
@@ -147,9 +152,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
                   </span>
                   <span className="block text-xs text-fg-subtle">
                     {l.type === 'labor' && l.hoursHundredths != null && `${formatScaled(l.hoursHundredths, 100)} h × ${formatMoney(l.rateCents ?? 0)}`}
-                    {l.type === 'part' && (l.purchaseLineId && costById.get(l.purchaseLineId)
-                      ? costLabel(costById.get(l.purchaseLineId)!)
-                      : estimateLabel(l))}
+                    {l.type === 'part' && (costsFor(l).length ? costLabel(costsFor(l)) : estimateLabel(l))}
                   </span>
                 </span>
                 <Money cents={l.amountCents} signed className="text-sm" />
@@ -162,7 +165,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
           <div className="border-t border-line">
             <div className="px-4 pt-2 text-xs font-medium tracking-wide text-fg-subtle uppercase">Costs not on the invoice</div>
             {unbilled.map((c) => (
-              <UnbilledCost key={c.id} cost={c} markupPct={markupPct} />
+              <UnbilledCost key={c.key} cost={c} markupPct={markupPct} />
             ))}
           </div>
         )}
@@ -327,10 +330,12 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   )
 }
 
-function costLabel(c: JobDetail['costs'][number]) {
-  const qty = c.quantityHundredths !== 100 ? `${formatQuantity(c.quantityHundredths)} × ` : ''
-  const source = c.usedOn ? `from stock, ${c.purchase.vendor}` : c.purchase.vendor
-  return `${qty}cost ${formatMoney(c.allocatedCents)} · ${source}`
+// One cost, or for parts billed from stock, the uses behind the line.
+function costLabel(cs: JobDetail['costs']) {
+  const qty = cs.reduce((a, c) => a + c.quantityHundredths, 0)
+  const vendors = [...new Set(cs.map((c) => c.purchase.vendor))].join(', ')
+  const source = cs.some((c) => c.useId != null) ? `from stock, ${vendors}` : vendors
+  return `${qty !== 100 ? `${formatQuantity(qty)} × ` : ''}cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} · ${source}`
 }
 
 function estimateLabel(l: JobLine) {
@@ -465,7 +470,7 @@ function AddCharge({ jobId, type, onDone }: { jobId: number; type: 'fee' | 'disc
 
 function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: string; fromStock: boolean; onDone: () => void }) {
   const hourly = line.type === 'labor' && line.hoursHundredths != null
-  const unbought = line.type === 'part' && !line.purchaseLineId
+  const unbought = line.type === 'part' && !line.purchaseLineId && !fromStock
   const [buying, setBuying] = useState(false)
   if (buying) {
     return (
@@ -513,11 +518,11 @@ function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: 
         <div className="mt-3 flex flex-wrap justify-between gap-2">
           <div className="flex gap-2">
             <ActionButton action={deleteLineAction} fields={{ id: line.id }} variant="danger" size="md"
-              confirm={line.purchaseLineId ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
+              confirm={line.purchaseLineId || fromStock ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
               <Trash2 size={15} />Remove
             </ActionButton>
             {fromStock && (
-              <ActionButton action={returnToStockAction} fields={{ id: line.purchaseLineId! }} size="md"
+              <ActionButton action={returnToStockAction} fields={{ jobLineId: line.id }} size="md"
                 confirm="Take this off the job and the invoice, and put it back in stock?">
                 Back to stock
               </ActionButton>
@@ -546,16 +551,18 @@ function UnbilledCost({ cost, markupPct }: { cost: JobDetail['costs'][number]; m
             {cost.purchase.vendor} · {cost.usedOn ? `from stock ${formatDate(cost.usedOn, { year: false })}` : formatDate(cost.purchase.purchasedOn, { year: false })} · cost {formatMoney(cost.allocatedCents)}
           </Link>
         </span>
-        {!open && cost.usedOn && (
-          <ActionButton action={returnToStockAction} fields={{ id: cost.id }} size="sm" confirm="Take this off the job and put it back in stock?">
+        {!open && cost.useId != null && (
+          <ActionButton action={returnToStockAction} fields={{ useId: cost.useId }} size="sm" confirm="Take this off the job and put it back in stock?">
             Back to stock
           </ActionButton>
         )}
         {!open && <Button size="sm" onClick={() => setOpen(true)}>Bill it</Button>}
       </div>
       {open && (
-        <ActionForm action={billCostAction} onSuccess={() => setOpen(false)} className="mt-2 grid grid-cols-[1fr_8rem_auto] items-end gap-2">
-          <input type="hidden" name="purchaseLineId" value={cost.id} />
+        <ActionForm action={cost.useId != null ? billStockUseAction : billCostAction} onSuccess={() => setOpen(false)} className="mt-2 grid grid-cols-[1fr_8rem_auto] items-end gap-2">
+          {cost.useId != null
+            ? <input type="hidden" name="useId" value={cost.useId} />
+            : <input type="hidden" name="purchaseLineId" value={cost.id} />}
           <Field label="On invoice as"><Input name="description" defaultValue={label} /></Field>
           <Field label="Billed"><MoneyInput name="billed" defaultValue={centsToInput(withMarkup(cost.allocatedCents, markupPct))} /></Field>
           <SubmitButton>Add</SubmitButton>

@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation'
 import { authedDb } from '@/server/session'
 import { getJobDetail, jobNumber } from '@/server/jobs'
 import { getSettings, today } from '@/server/settings'
-import { listStock, toStockOption } from '@/server/stock'
+import { listStock } from '@/server/stock'
 import { stripeEnabled } from '@/server/stripe'
 import { JobView } from './job-view'
 
@@ -28,7 +28,7 @@ export default async function JobPage({ params }: PageProps<'/jobs/[id]'>) {
       markupPct={s.partsMarkupPct}
       stripe={stripeEnabled()}
       customerHasEmail={Boolean(detail.customer.email)}
-      stock={(await listStock(db)).map(toStockOption)}
+      stock={await listStock(db)}
     />
   )
 }

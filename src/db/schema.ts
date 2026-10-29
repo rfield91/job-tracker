@@ -122,11 +122,9 @@ export const purchaseLines = pgTable('purchase_lines', {
   jobId: integer('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   categoryId: integer('category_id').references(() => categories.id),
   assetId: integer('asset_id').references(() => assets.id, { onDelete: 'set null' }),
-  // Materials on the shelf, not used on a job yet.
+  // Bought for stock. What's been used is in stockUses; the line itself stays
+  // as entered on the receipt.
   stock: boolean('stock').notNull().default(false),
-  // Set on lines taken from stock: the day they went on the job. Their cost
-  // counts on this date instead of the purchase date.
-  usedOn: date('used_on'),
   // Set for contract labor, for the 1099-NEC list.
   payee: text('payee'),
   sortOrder: integer('sort_order').notNull().default(0),
@@ -153,6 +151,21 @@ export const jobLines = pgTable('job_lines', {
   quantityHundredths: integer('quantity_hundredths'),
   sortOrder: integer('sort_order').notNull().default(0),
 }, (t) => [index('job_lines_job_idx').on(t.jobId)])
+
+// Some of a stock line put on a job. Its cost counts on usedOn, not the
+// purchase date. Deleting the job puts it back on the shelf.
+export const stockUses = pgTable('stock_uses', {
+  id: serial('id').primaryKey(),
+  purchaseLineId: integer('purchase_line_id').notNull().references(() => purchaseLines.id, { onDelete: 'cascade' }),
+  jobId: integer('job_id').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
+  quantityHundredths: integer('quantity_hundredths').notNull(),
+  usedOn: date('used_on').notNull(),
+  // The invoice line it's billed on, if any (one line can cover several uses).
+  jobLineId: integer('job_line_id').references(() => jobLines.id, { onDelete: 'set null' }),
+}, (t) => [
+  index('stock_uses_line_idx').on(t.purchaseLineId),
+  index('stock_uses_job_idx').on(t.jobId),
+])
 
 export const paymentRequests = pgTable('payment_requests', {
   id: serial('id').primaryKey(),
@@ -234,6 +247,7 @@ export type Job = typeof jobs.$inferSelect
 export type JobLine = typeof jobLines.$inferSelect
 export type Purchase = typeof purchases.$inferSelect
 export type PurchaseLine = typeof purchaseLines.$inferSelect
+export type StockUse = typeof stockUses.$inferSelect
 export type Category = typeof categories.$inferSelect
 export type Asset = typeof assets.$inferSelect
 export type Payment = typeof payments.$inferSelect
