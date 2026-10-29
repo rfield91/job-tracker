@@ -1,0 +1,103 @@
+@import "tailwindcss";
+
+/* Theme tokens. Use these, not raw palette colours. */
+:root {
+  --canvas: #f6f5f2;
+  --surface: #ffffff;
+  --raised: #fbfaf8;
+  --hover: #f0eee9;
+  --line: #e3e0d9;
+  --fg: #1d1c1a;
+  --fg-muted: #5c5953;
+  --fg-subtle: #8e8a82;
+  --accent: #c2410c;
+  --accent-fg: #ffffff;
+  --accent-soft: #fdeee6;
+  --good: #15803d;
+  --good-soft: #e7f5ec;
+  --warn: #a16207;
+  --warn-soft: #fbf3dc;
+  --danger: #b91c1c;
+  --danger-soft: #fbe9e9;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #131312;
+    --surface: #1c1b1a;
+    --raised: #232220;
+    --hover: #2a2927;
+    --line: #34322f;
+    --fg: #ecebe8;
+    --fg-muted: #b0ada6;
+    --fg-subtle: #7f7c76;
+    --accent: #f97316;
+    --accent-fg: #1a0d05;
+    --accent-soft: #3a2111;
+    --good: #4ade80;
+    --good-soft: #15291c;
+    --warn: #facc15;
+    --warn-soft: #2e2810;
+    --danger: #f87171;
+    --danger-soft: #331717;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-raised: var(--raised);
+  --color-hover: var(--hover);
+  --color-line: var(--line);
+  --color-fg: var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-subtle: var(--fg-subtle);
+  --color-accent: var(--accent);
+  --color-accent-fg: var(--accent-fg);
+  --color-accent-soft: var(--accent-soft);
+  --color-good: var(--good);
+  --color-good-soft: var(--good-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--fg);
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Printed invoices and the tax worksheet: no app chrome, black on white. */
+@media print {
+  :root {
+    --canvas: #fff;
+    --surface: #fff;
+    --raised: #fff;
+    --fg: #000;
+    --fg-muted: #333;
+    --fg-subtle: #555;
+    --line: #ccc;
+    color-scheme: light;
+  }
+  .no-print {
+    display: none !important;
+  }
+  .print-plain {
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+  }
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+}
