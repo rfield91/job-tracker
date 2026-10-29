@@ -42,6 +42,7 @@ export const DEFAULT_CATEGORIES: { name: string; scheduleLine: string; systemKey
   { name: 'Utilities', scheduleLine: '25' },
   { name: 'Software and subscriptions', scheduleLine: '27a' },
   { name: 'Training and education', scheduleLine: '27a' },
+  { name: 'Prototypes and R&D', scheduleLine: '27a' },
   { name: 'Payment processing fees', scheduleLine: '27a', systemKey: 'payment_fees' },
   { name: 'Other', scheduleLine: '27a' },
 ]

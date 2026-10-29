@@ -2,7 +2,7 @@
 
 import type { FormState } from '@/lib/form-state'
 import { int, money, reqDate, reqInt, reqMoney, scaled, str } from '@/lib/form'
-import { billStockUse, returnToStock, takeFromStock } from '@/server/stock'
+import { billStockUse, returnToStock, takeFromStock, useForShop } from '@/server/stock'
 import { run } from './run'
 
 export async function takeFromStockAction(_: FormState, fd: FormData): Promise<FormState> {
@@ -21,7 +21,23 @@ export async function takeFromStockAction(_: FormState, fd: FormData): Promise<F
   })
 }
 
-// With useId: one cost that isn't on the invoice. With jobLineId: an invoice
+export async function useForShopAction(_: FormState, fd: FormData): Promise<FormState> {
+  return run(async (db) => {
+    const quantity = scaled(fd, 'quantity', 100)
+    if (quantity == null) throw new Error('Enter how many you used')
+    const key = str(fd, 'stockKey')
+    if (!key) throw new Error('Pick a stock item')
+    await useForShop(db, key, {
+      categoryId: reqInt(fd, 'categoryId', 'a category'),
+      quantityHundredths: quantity,
+      usedOn: reqDate(fd, 'usedOn'),
+      note: str(fd, 'note') || null,
+    })
+  })
+}
+
+// With useId: one stock use that isn't on an invoice (a job cost or the
+// shop's own use). With jobLineId: an invoice
 // line and everything it billed from stock.
 export async function returnToStockAction(_: FormState, fd: FormData): Promise<FormState> {
   return run(async (db) => {

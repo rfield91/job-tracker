@@ -49,7 +49,10 @@ instructions once.
   flanges) are stock: a purchase line marked stock. Using some records a
   stock use (job, quantity, date); the purchase line stays as entered and
   its cost is shared by quantity. The same part number bought on different
-  receipts is one stock item, used oldest first. Stock costs count on the
+  receipts is one stock item, used oldest first. The shop can also use
+  stock itself (the demo car, prototypes): that use goes to an expense
+  category such as Prototypes and R&D, with a note, and comes out of
+  Part III purchases so it isn't counted twice. Stock costs count on the
   day they're used,
   and the tax worksheet reports what's on the shelf at each year end as
   beginning and ending inventory (Part III lines 35 and 41).

@@ -92,7 +92,12 @@ export default async function TaxPage({ searchParams }: PageProps<'/reports/tax'
       <Section title="Part III · Cost of goods sold">
         <Line n="35" label="Inventory at beginning of year (stock on the shelf)" cents={w.cogs.beginningStockCents} />
         <Line n="36" label="Purchases (parts and materials for jobs)" cents={w.cogs.purchasesCents} />
-        {w.cogs.stockBoughtCents > 0 && <Sub>Includes {formatMoney(w.cogs.stockBoughtCents)} bought for stock</Sub>}
+        {(w.cogs.stockBoughtCents > 0 || w.cogs.shopUseCents > 0) && (
+          <Sub>
+            {w.cogs.stockBoughtCents > 0 && <div>Includes {formatMoney(w.cogs.stockBoughtCents)} bought for stock</div>}
+            {w.cogs.shopUseCents > 0 && <div>Less {formatMoney(w.cogs.shopUseCents)} of stock the shop used itself, counted in its expense categories above</div>}
+          </Sub>
+        )}
         <Line n="37" label="Cost of labor (subcontracted on jobs)" cents={w.cogs.laborCents} />
         <Line n="41" label="Inventory at end of year (stock on the shelf)" cents={w.cogs.endingStockCents} />
         {w.cogs.endingStockCents > 0 && <Sub><Link className="underline" href="/stock">See what’s in stock</Link>. Count the shelf at year end and fix anything that was used or scrapped.</Sub>}

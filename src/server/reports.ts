@@ -144,7 +144,10 @@ export async function taxWorksheet(db: Db, year: number) {
   const cogsLaborCents = sum(directJobLines.filter((l) => l.payee))
   const stockLines = await allocatedLines(db, { stockOrigin: true })
   const stockBoughtCents = sum(stockLines.filter((l) => l.purchase.purchasedOn >= period.from && l.purchase.purchasedOn <= period.to))
-  const cogsPurchasesCents = sum(directJobLines.filter((l) => !l.payee)) + stockBoughtCents
+  // Stock the shop used itself is an expense in its category (Part II), so
+  // it comes out of purchases here rather than counting twice.
+  const shopUseCents = sum(stockLines.filter((l) => l.categoryId != null && l.usedOn != null && l.usedOn >= period.from && l.usedOn <= period.to))
+  const cogsPurchasesCents = sum(directJobLines.filter((l) => !l.payee)) + stockBoughtCents - shopUseCents
   const beginningStockCents = stockOnHandCents(stockLines, `${year - 1}-12-31`)
   const endingStockCents = stockOnHandCents(stockLines, period.to)
   const cogsCents = beginningStockCents + cogsPurchasesCents + cogsLaborCents - endingStockCents
@@ -215,6 +218,7 @@ export async function taxWorksheet(db: Db, year: number) {
       beginningStockCents,
       purchasesCents: cogsPurchasesCents,
       stockBoughtCents,
+      shopUseCents,
       laborCents: cogsLaborCents,
       endingStockCents,
       totalCents: cogsCents,
@@ -372,7 +376,7 @@ export async function monthLog(db: Db, month: string) {
       const j = l.jobId ? jobById.get(l.jobId) : undefined
       const to = k === 'stock' ? 'Stock'
         : k === 'equipment' ? 'Equipment'
-        : k === 'expense' ? catById.get(l.categoryId!) ?? 'Expense'
+        : k === 'expense' ? [catById.get(l.categoryId!) ?? 'Expense', l.useNote].filter(Boolean).join(' · ')
         : j ? `#${jobNumber(j)} ${j.title}` : 'Needs a job or category'
       return { label: l.description || p.vendor, to, cents: -l.allocatedCents || 0, inProfit: k === 'cogs' || k === 'expense' }
     })

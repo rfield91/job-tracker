@@ -1,6 +1,6 @@
-import { eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, gte, inArray, isNotNull, lte } from 'drizzle-orm'
 import type { Db } from '@/db'
-import { jobLines, stockUses } from '@/db/schema'
+import { categories, jobLines, purchaseLines, purchases, stockUses } from '@/db/schema'
 import { formatQuantity } from '@/lib/money'
 import { allocatedLines } from './ledger'
 import { addJobLine, refreshJobStatus } from './jobs'
@@ -9,7 +9,8 @@ import { addJobLine, refreshJobStatus } from './jobs'
 // stock. Using some on a job records a stock use; the purchase line stays as
 // entered, and the ledger shares its cost (with tax and shipping) by quantity.
 // The same part bought on different receipts is one item here, taken oldest
-// first.
+// first. The shop can use stock itself too (the demo car, prototypes): that
+// comes off the shelf as an expense in a category instead of a job cost.
 
 export type StockLot = {
   lineId: number
@@ -85,13 +86,8 @@ export async function takeFromStock(db: Db, key: string, input: {
 }) {
   return db.transaction(async (tx) => {
     const t = tx as unknown as Db
-    const group = (await listStock(t)).find((g) => g.key === key)
-    if (!group) throw new Error('That isn’t in stock any more')
-    const qty = input.quantityHundredths
-    if (qty <= 0) throw new Error('Quantity must be more than 0')
-    if (qty > group.quantityHundredths) throw new Error(`Only ${formatQuantity(group.quantityHundredths)} in stock`)
-
-    const uses = await t.insert(stockUses).values(takeFifo(group.lots, qty).map((p) => ({
+    const { group, pieces } = await take(t, key, input.quantityHundredths)
+    const uses = await t.insert(stockUses).values(pieces.map((p) => ({
       purchaseLineId: p.lot.lineId,
       jobId: input.jobId,
       quantityHundredths: p.quantityHundredths,
@@ -112,7 +108,46 @@ export async function takeFromStock(db: Db, key: string, input: {
   })
 }
 
-// Undoes takeFromStock: one use (a cost not on the invoice), or everything
+async function take(db: Db, key: string, qty: number) {
+  const group = (await listStock(db)).find((g) => g.key === key)
+  if (!group) throw new Error('That isn’t in stock any more')
+  if (qty <= 0) throw new Error('Quantity must be more than 0')
+  if (qty > group.quantityHundredths) throw new Error(`Only ${formatQuantity(group.quantityHundredths)} in stock`)
+  return { group, pieces: takeFifo(group.lots, qty) }
+}
+
+// The shop's own use: an expense in the category on the day used.
+export async function useForShop(db: Db, key: string, input: {
+  categoryId: number
+  quantityHundredths: number
+  usedOn: string
+  note: string | null
+}) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db
+    const { pieces } = await take(t, key, input.quantityHundredths)
+    return t.insert(stockUses).values(pieces.map((p) => ({
+      purchaseLineId: p.lot.lineId,
+      categoryId: input.categoryId,
+      note: input.note,
+      quantityHundredths: p.quantityHundredths,
+      usedOn: input.usedOn,
+    }))).returning()
+  })
+}
+
+// What the shop used itself in a year, newest first.
+export async function listShopUses(db: Db, year: number) {
+  return db.select({ use: stockUses, line: purchaseLines, purchase: purchases, category: categories })
+    .from(stockUses)
+    .innerJoin(purchaseLines, eq(purchaseLines.id, stockUses.purchaseLineId))
+    .innerJoin(purchases, eq(purchases.id, purchaseLines.purchaseId))
+    .innerJoin(categories, eq(categories.id, stockUses.categoryId))
+    .where(and(isNotNull(stockUses.categoryId), gte(stockUses.usedOn, `${year}-01-01`), lte(stockUses.usedOn, `${year}-12-31`)))
+    .orderBy(desc(stockUses.usedOn), desc(stockUses.id))
+}
+
+// Undoes takeFromStock or useForShop: one use (a cost not on the invoice), or everything
 // billed on an invoice line along with the line.
 export async function returnToStock(db: Db, target: { useId: number } | { jobLineId: number }) {
   return db.transaction(async (tx) => {
@@ -121,14 +156,14 @@ export async function returnToStock(db: Db, target: { useId: number } | { jobLin
     const removed = await t.delete(stockUses).where(where).returning()
     if (removed.length === 0) throw new Error('That cost didn’t come from stock')
     if ('jobLineId' in target) await t.delete(jobLines).where(eq(jobLines.id, target.jobLineId))
-    await refreshJobStatus(t, removed[0].jobId)
+    if (removed[0].jobId != null) await refreshJobStatus(t, removed[0].jobId)
   })
 }
 
 // Puts a stock use that's on the job but not the invoice onto the invoice.
 export async function billStockUse(db: Db, useId: number, billedCents: number, description: string) {
   const [use] = await db.select().from(stockUses).where(eq(stockUses.id, useId))
-  if (!use) throw new Error('That stock use is gone')
+  if (!use?.jobId) throw new Error('That stock use is gone')
   const line = await addJobLine(db, use.jobId, { type: 'part', description, amountCents: billedCents })
   await db.update(stockUses).set({ jobLineId: line.id }).where(eq(stockUses.id, useId))
   return line

@@ -1,5 +1,6 @@
 import {
   boolean,
+  check,
   date,
   integer,
   jsonb,
@@ -10,6 +11,7 @@ import {
   uniqueIndex,
   index,
 } from 'drizzle-orm/pg-core'
+import { sql } from 'drizzle-orm'
 import type { SettingsData } from '@/lib/settings-data'
 
 // Money is integer cents everywhere. Hours are stored in hundredths, miles in
@@ -157,7 +159,11 @@ export const jobLines = pgTable('job_lines', {
 export const stockUses = pgTable('stock_uses', {
   id: serial('id').primaryKey(),
   purchaseLineId: integer('purchase_line_id').notNull().references(() => purchaseLines.id, { onDelete: 'cascade' }),
-  jobId: integer('job_id').notNull().references(() => jobs.id, { onDelete: 'cascade' }),
+  // Used on a job, or by the shop itself (the demo car, prototypes) as an
+  // expense in a category, with a note saying what for.
+  jobId: integer('job_id').references(() => jobs.id, { onDelete: 'cascade' }),
+  categoryId: integer('category_id').references(() => categories.id),
+  note: text('note'),
   quantityHundredths: integer('quantity_hundredths').notNull(),
   usedOn: date('used_on').notNull(),
   // The invoice line it's billed on, if any (one line can cover several uses).
@@ -165,6 +171,7 @@ export const stockUses = pgTable('stock_uses', {
 }, (t) => [
   index('stock_uses_line_idx').on(t.purchaseLineId),
   index('stock_uses_job_idx').on(t.jobId),
+  check('stock_uses_job_or_category', sql`(${t.jobId} is null) <> (${t.categoryId} is null)`),
 ])
 
 export const paymentRequests = pgTable('payment_requests', {

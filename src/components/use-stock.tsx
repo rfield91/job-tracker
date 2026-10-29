@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { ActionForm, SubmitButton } from './forms'
 import { Button, Field, Input, MoneyInput, Select } from './ui'
-import { takeFromStockAction } from '@/app/actions/stock'
+import { takeFromStockAction, useForShopAction } from '@/app/actions/stock'
 import { formatMoney, formatQuantity, parseQuantity, withMarkup } from '@/lib/money'
 import type { JobOption } from '@/server/pickers'
 import type { StockGroup } from '@/server/stock'
@@ -25,6 +25,47 @@ function fifoCost(item: StockOption, qty: number) {
     need -= q
   }
   return cents
+}
+
+// Takes some of a stock item for the shop's own use (the demo car, a
+// prototype): an expense in a category instead of a job cost.
+export function ShopUseForm({ item, categories, today, onDone }: {
+  item: StockOption
+  categories: { id: number; name: string }[]
+  today: string
+  onDone: () => void
+}) {
+  const [qty, setQty] = useState(formatQuantity(Math.min(100, item.quantityHundredths)))
+  const used = parseQuantity(qty)
+  const costCents = used != null ? fifoCost(item, used) : null
+  const rd = categories.find((c) => c.name === 'Prototypes and R&D')
+  return (
+    <ActionForm action={useForShopAction} onSuccess={onDone} className="space-y-3">
+      <input type="hidden" name="stockKey" value={item.key} />
+      <Field label="Expense category">
+        <Select name="categoryId" required defaultValue={rd?.id ?? ''}>
+          <option value="">Pick a category…</option>
+          {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </Select>
+      </Field>
+      <div className="grid grid-cols-[6rem_1fr_9rem] gap-3">
+        <Field label="Qty used" hint={`of ${formatQuantity(item.quantityHundredths)}`}>
+          <Input name="quantity" value={qty} onChange={(e) => setQty(e.target.value)} inputMode="decimal" required />
+        </Field>
+        <Field label="Cost" hint="With its share of tax and shipping">
+          <div className="flex h-10 items-center text-sm tabular">{costCents != null ? formatMoney(costCents) : '—'}</div>
+        </Field>
+        <Field label="Used on"><Input name="usedOn" type="date" defaultValue={today} required /></Field>
+      </div>
+      <Field label="What for" hint="Keep a note of why it went on the car: testing, a prototype, a show build">
+        <Input name="note" placeholder="Prototype downpipe on the demo car" />
+      </Field>
+      <div className="flex justify-end gap-2">
+        <Button onClick={onDone}>Cancel</Button>
+        <SubmitButton>Use for the shop</SubmitButton>
+      </div>
+    </ActionForm>
+  )
 }
 
 // Puts some of a stock item on a job. From the Stock page pass the one item

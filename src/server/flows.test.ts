@@ -9,7 +9,7 @@ import { addPayment, assignPayment, unmatchedPayments } from './payments'
 import { createPurchase, deletePurchase, getPurchase, listPurchases, updatePurchase } from './purchases'
 import { monthLog, monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
-import { billStockUse, listStock, returnToStock, takeFromStock } from './stock'
+import { billStockUse, listShopUses, listStock, returnToStock, takeFromStock, useForShop } from './stock'
 import { addTrip } from './trips'
 import { commitImport } from './import'
 import { handleStripeEvent, invoiceItems, type StripeApi } from './stripe'
@@ -226,6 +226,34 @@ describe('stock', () => {
     // Billing a use that isn't on the invoice yet.
     await billStockUse(db, unbilled[0].useId!, 5000, 'Elbows')
     expect((await getJobDetail(db, job.id))!.costs.filter((c) => c.jobLineId != null)).toHaveLength(1)
+  })
+
+  it('lets the shop use stock itself as an expense, without counting it twice', async () => {
+    const job = await newJob('Downpipe', '2026-03-01')
+    const rd = await category('Prototypes and R&D')
+    const p = await createPurchase(db, {
+      purchasedOn: '2025-11-01', vendor: 'Vibrant',
+      lines: [{ description: 'Flex section', partNumber: 'FX-3', quantityHundredths: 400, amountCents: 10000, target: { kind: 'stock' } }],
+    })
+    const [flex] = await listStock(db)
+    await takeFromStock(db, flex.key, { jobId: job.id, quantityHundredths: 200, usedOn: '2026-03-05' })
+    const [use] = await useForShop(db, flex.key, { categoryId: rd.id, quantityHundredths: 100, usedOn: '2026-04-02', note: 'Prototype on the demo car' })
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 100, allocatedCents: 2500 })
+    expect((await getPurchase(db, p.id))!.lines[0].uses.map((u) => [u.job?.id ?? null, u.category?.name ?? null]))
+      .toEqual([[job.id, null], [null, 'Prototypes and R&D']])
+    expect((await listShopUses(db, 2026)).map((u) => u.use.note)).toEqual(['Prototype on the demo car'])
+
+    // 2026: two flex sections in cost of goods sold, one in R&D expenses.
+    const w = await taxWorksheet(db, 2026)
+    expect(w.cogs).toMatchObject({ beginningStockCents: 10000, shopUseCents: 2500, endingStockCents: 2500, totalCents: 5000 })
+    expect(w.expenses.find((e) => e.line === '27a')!.items).toContainEqual(expect.objectContaining({ name: 'Prototypes and R&D', totalCents: 2500 }))
+    expect((await monthlyReport(db, 2026)).rows[3]).toMatchObject({ expenseCents: 2500 })
+
+    // The job's costs don't include it, and putting it back undoes it.
+    expect((await getJobDetail(db, job.id))!.totals.costCents).toBe(5000)
+    await returnToStock(db, { useId: use.id })
+    expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 200 })
+    expect((await taxWorksheet(db, 2026)).cogs.shopUseCents).toBe(0)
   })
 })
 

@@ -99,9 +99,9 @@ async function writeLines(db: Db, purchaseId: number, input: PurchaseInput, exis
     const l = input.lines.find((x) => x.id === e.id)
     const name = e.description || 'a stock line'
     const what = `${formatQuantity(u)} of ${name}`
-    if (!l) throw new Error(`${what} went on jobs. Put it back in stock before removing the line.`)
-    if (l.target.kind !== 'stock') throw new Error(`${what} went on jobs, so it has to stay Stock.`)
-    if ((l.quantityHundredths ?? 100) < u) throw new Error(`${what} already went on jobs; the quantity can’t be less.`)
+    if (!l) throw new Error(`${what} has been used. Put it back in stock before removing the line.`)
+    if (l.target.kind !== 'stock') throw new Error(`${what} has been used, so it has to stay Stock.`)
+    if ((l.quantityHundredths ?? 100) < u) throw new Error(`${what} has been used; the quantity can’t be less.`)
   }
 
   for (const [i, l] of input.lines.entries()) {
@@ -213,7 +213,9 @@ export async function getPurchase(db: Db, id: number) {
     ? await db.select().from(jobLines).where(inArray(jobLines.purchaseLineId, lines.map((l) => l.line.id)))
     : []
   const uses = lines.length
-    ? await db.select({ use: stockUses, job: jobs }).from(stockUses).innerJoin(jobs, eq(jobs.id, stockUses.jobId))
+    ? await db.select({ use: stockUses, job: jobs, category: categories }).from(stockUses)
+      .leftJoin(jobs, eq(jobs.id, stockUses.jobId))
+      .leftJoin(categories, eq(categories.id, stockUses.categoryId))
       .where(inArray(stockUses.purchaseLineId, lines.map((l) => l.line.id))).orderBy(asc(stockUses.usedOn), asc(stockUses.id))
     : []
   const attachments = await db.select().from(files).where(eq(files.purchaseId, id)).orderBy(asc(files.id))

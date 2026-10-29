@@ -60,9 +60,12 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
                   {line.payee && <> · paid to {line.payee}</>}
                   {billed.length > 0 && <> · billed {formatMoney(billed.reduce((a, b) => a + b.amountCents, 0))}</>}
                 </div>
-                {uses.map(({ use, job: j }) => (
+                {uses.map(({ use, job: j, category: c }) => (
                   <div key={use.id} className="text-xs text-fg-subtle">
-                    {formatQuantity(use.quantityHundredths)} used on <Link href={`/jobs/${j.id}`} className="hover:underline">#{jobNumber(j)} {j.title}</Link> · {formatDate(use.usedOn, { year: false })}
+                    {formatQuantity(use.quantityHundredths)} used {j
+                      ? <>on <Link href={`/jobs/${j.id}`} className="hover:underline">#{jobNumber(j)} {j.title}</Link></>
+                      : <>by the <Link href="/stock" className="hover:underline">shop</Link> · {c?.name}{use.note && ` · ${use.note}`}</>}
+                    {' '}· {formatDate(use.usedOn, { year: false })}
                   </div>
                 ))}
               </div>

@@ -7,11 +7,12 @@ export type AllocatedLine = PurchaseLine & {
   // Line amount plus its share of the receipt's tax and shipping.
   allocatedCents: number
   purchase: Purchase
-  // Stock lines come out in pieces: one per use on a job (with useId, jobId
-  // and usedOn set) and what's still on the shelf (stock true). The others
-  // come out whole.
+  // Stock lines come out in pieces: one per use (with useId and usedOn set,
+  // and jobId, or categoryId when the shop used it) and what's still on the
+  // shelf (stock true). The others come out whole.
   useId: number | null
   usedOn: string | null
+  useNote: string | null
   // For a use: the invoice line it's billed on.
   jobLineId: number | null
   // Unique across pieces (id is the purchase line's, shared by them).
@@ -88,7 +89,7 @@ export async function allocatedLines(
     const ls = byPurchase.get(p.id) ?? []
     const alloc = allocate(ls.map((l) => l.amountCents), p.taxCents + p.shippingCents)
     ls.forEach((l, i) => {
-      const whole = { ...l, allocatedCents: alloc[i], purchase: p, useId: null, usedOn: null, jobLineId: null, key: `l${l.id}` }
+      const whole = { ...l, allocatedCents: alloc[i], purchase: p, useId: null, usedOn: null, useNote: null, jobLineId: null, key: `l${l.id}` }
       if (!l.stock) out.push(whole)
       else out.push(...splitStock(whole, uses.filter((u) => u.purchaseLineId === l.id)))
     })
@@ -115,11 +116,13 @@ function splitStock(line: AllocatedLine, uses: StockUse[]): AllocatedLine[] {
     ...line,
     stock: false,
     jobId: u.jobId,
+    categoryId: u.categoryId,
     quantityHundredths: u.quantityHundredths,
     amountCents: amounts[i],
     allocatedCents: shares[i],
     useId: u.id,
     usedOn: u.usedOn,
+    useNote: u.note,
     jobLineId: u.jobLineId,
     key: `u${u.id}`,
   }))
@@ -136,7 +139,7 @@ function split(cents: number, qtys: number[], total: number) {
 }
 
 // Materials on the shelf at the end of a day, at cost: bought by then and
-// not yet used on a job.
+// not yet used.
 export function stockOnHandCents(lines: AllocatedLine[], day: string) {
   return lines
     .filter((l) => l.purchase.purchasedOn <= day && (l.stock || (l.usedOn != null && l.usedOn > day)))
