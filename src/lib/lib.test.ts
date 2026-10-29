@@ -4,6 +4,7 @@ import { addDays, monthEnd, parseDate, todayIn } from './dates'
 import { guessMapping, normalize } from './import'
 import { toCsv } from './csv'
 import { signSession, verifySession } from './auth'
+import { estimateNh, estimateTax } from './tax-estimate'
 
 describe('money', () => {
   it('parses the ways amounts get typed', () => {
@@ -97,5 +98,26 @@ describe('session cookie', () => {
     expect(await verifySession(t, 'secret', 31 * 864e5)).toBeNull()
     process.env.ALLOWED_EMAILS = 'someone@else.com'
     expect(await verifySession(t, 'secret', 1000)).toBeNull()
+  })
+})
+
+describe('tax estimate', () => {
+  it('adds self-employment tax and the income tax on top of other income', () => {
+    // Single, $50,000 profit, nothing else: the QBI deduction is capped at
+    // 20% of taxable income.
+    const a = estimateTax(2026, { profitCents: 5_000_000, otherIncomeCents: 0, status: 'single' })!
+    expect(a.seTaxCents).toBeCloseTo(706478, -1)
+    expect(a.qbiDeductionCents).toBeCloseTo(607352, -1)
+    expect(a.businessIncomeTaxCents).toBeCloseTo(266729, -1)
+    expect(a.totalCents).toBeCloseTo(973207, -1)
+
+    // Married with $80,000 of wages: only the extra tax counts.
+    const b = estimateTax(2026, { profitCents: 5_000_000, otherIncomeCents: 8_000_000, status: 'married_joint' })!
+    expect(b.qbiDeductionCents).toBeCloseTo(929352, -1)
+    expect(b.businessIncomeTaxCents).toBeCloseTo(446089, -1)
+
+    expect(estimateTax(2026, { profitCents: 30_000, otherIncomeCents: 0, status: 'single' })!.seTaxCents).toBe(0)
+    expect(estimateTax(2024, { profitCents: 5_000_000, otherIncomeCents: 0, status: 'single' })).toBeNull()
+    expect(estimateNh({ grossIncomeCents: 12_000_000, profitCents: 5_000_000 })).toMatchObject({ bptApplies: true, betMayApply: false, bptUpToCents: 375000 })
   })
 })

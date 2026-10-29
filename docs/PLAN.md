@@ -231,9 +231,16 @@ Things to know about Stripe for this:
 
   Export as PDF and CSV, plus a ZIP of all receipts named by date and
   vendor.
-- **Quarterly estimate helper** (later): profit so far this year and a
-  suggested set-aside amount at a percentage you choose, with the federal
-  estimated payment due dates.
+- **Tax estimate:** on the tax worksheet, self-employment tax plus the
+  federal income tax the business adds on top of the household's other
+  income (filing status and other income by year in settings), after half
+  of SE tax, the standard deduction, the QBI deduction and expensed
+  equipment. Shows whether the NH BPT/BET thresholds are crossed. Tax
+  tables live in `src/lib/tax-estimate.ts` and need adding each year.
+- **Quarterly estimate helper:** profit by quarter and a suggested
+  set-aside (what each quarter adds to the year's estimated tax, or a flat
+  percentage for years without tax tables), with the federal estimated
+  payment due dates.
 
 ## Data model
 

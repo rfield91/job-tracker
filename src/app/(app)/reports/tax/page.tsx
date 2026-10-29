@@ -7,6 +7,7 @@ import { ZipExportButton } from '@/components/zip-export'
 import { Badge, Card, cx, Money, Notice, PageHeader } from '@/components/ui'
 import { formatDate } from '@/lib/dates'
 import { formatMoney } from '@/lib/money'
+import { FILING_STATUS_LABELS, NH } from '@/lib/tax-estimate'
 import { authedDb } from '@/server/session'
 import { TREATMENT_LABELS } from '@/server/assets'
 import { METHOD_LABELS } from '@/server/payments'
@@ -22,6 +23,8 @@ export default async function TaxPage({ searchParams }: PageProps<'/reports/tax'
   const year = typeof sp.year === 'string' ? Number(sp.year) : thisYear - (new Date().getMonth() < 4 ? 1 : 0)
   const w = await taxWorksheet(db, year)
   const c = w.checks
+  const e = w.estimate
+  const f = e.federal
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <div className="no-print">
@@ -135,9 +138,44 @@ export default async function TaxPage({ searchParams }: PageProps<'/reports/tax'
         <Sub>Flagged at {formatMoney(w.settings.contractorThresholdCents, { whole: true })} (settings). Card and PayPal payments to contractors are reported by the processor instead.</Sub>
       </Section>
 
-      <Section title="New Hampshire">
-        <Line n="" label="Gross business income (for the Business Profits Tax filing threshold)" cents={w.grossIncomeCents} />
-        <Sub>NH has no sales tax and no tax on wages. The BPT and BET have filing thresholds; compare this number with the current ones on the NH DRA site.</Sub>
+      <Section title="Estimated tax">
+        {!f ? (
+          <div className="px-4 py-3 text-sm text-fg-subtle">No federal tax tables for {year} yet, so there’s no estimate.</div>
+        ) : (
+          <>
+            <Line n="" label="Net profit before depreciation" cents={w.netBeforeDepreciationCents} />
+            {e.equipmentDeductionCents > 0 && <Line n="" label="Equipment expensed this year (de minimis, Section 179, bonus)" cents={-e.equipmentDeductionCents} />}
+            <Line n="" label="Profit for the estimate" cents={e.profitCents} strong />
+            <Line n="" label={`Self-employment tax (${formatMoney(f.netEarningsCents, { whole: true })} of net earnings)`} cents={f.seTaxCents} />
+            <Sub>Social Security {formatMoney(f.socialSecurityCents)} · Medicare {formatMoney(f.medicareCents)}</Sub>
+            <Line n="" label="Federal income tax the business adds" cents={f.businessIncomeTaxCents} />
+            <Sub>
+              <div className="flex justify-between"><span>Other household income ({FILING_STATUS_LABELS[w.settings.filingStatus].toLowerCase()})</span><Money cents={e.otherIncomeCents ?? 0} /></div>
+              <div className="flex justify-between"><span>Less half of self-employment tax</span><Money cents={-f.halfSeDeductionCents || 0} /></div>
+              <div className="flex justify-between"><span>Less standard deduction</span><Money cents={-f.standardDeductionCents || 0} /></div>
+              <div className="flex justify-between"><span>Less qualified business income deduction</span><Money cents={-f.qbiDeductionCents || 0} /></div>
+              <div className="flex justify-between"><span>Household taxable income</span><Money cents={f.taxableIncomeCents} /></div>
+              <div className="flex justify-between"><span>Household federal income tax</span><Money cents={f.householdIncomeTaxCents} /></div>
+            </Sub>
+            <Line n="" label={`Federal tax from the business${f.effectivePct ? ` (${f.effectivePct}% of profit)` : ''}`} cents={f.totalCents} strong />
+            {(e.otherIncomeCents == null || c.undecidedAssets > 0 || e.macrsCount > 0) && (
+              <Sub>
+                {e.otherIncomeCents == null && <div>No other household income entered for {year}, so this assumes none. <Link className="underline" href="/settings">Add it in settings</Link> if anyone in the household has wages or other income.</div>}
+                {c.undecidedAssets > 0 && <div>Equipment with no tax treatment yet isn’t deducted. Expensing it would lower this.</div>}
+                {e.macrsCount > 0 && <div>Regular depreciation on equipment isn’t included; your tax software works it out.</div>}
+              </Sub>
+            )}
+          </>
+        )}
+        <Line n="" label="NH gross business income" cents={w.grossIncomeCents} />
+        <Sub>
+          {e.nh.bptApplies
+            ? <>Over the {formatMoney(NH.bptThreshold * 100, { whole: true })} Business Profits Tax threshold, so you’d file a BPT return. At 7.5% of profit that’s up to {formatMoney(e.nh.bptUpToCents, { whole: true })}, before the deduction for reasonable pay for your own work, which can bring it down a lot.</>
+            : <>Under the {formatMoney(NH.bptThreshold * 100, { whole: true })} Business Profits Tax threshold, so no BPT return.</>}
+          {e.nh.betMayApply && <> Over {formatMoney(NH.betThreshold * 100, { whole: true })}, so the Business Enterprise Tax (0.55%) may apply too; what you pay is a credit against the BPT.</>}
+          {' '}NH has no sales tax and no tax on wages.
+        </Sub>
+        <Sub>Leaves out credits, itemized deductions, retirement contributions, health insurance and other income’s withholding. Your other income’s Social Security wages aren’t counted against the wage cap.</Sub>
       </Section>
 
       <div className="text-xs text-fg-subtle">Cash basis. This worksheet organizes your records; it isn’t tax advice. Check categories against the Schedule C instructions.</div>

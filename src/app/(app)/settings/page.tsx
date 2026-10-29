@@ -7,6 +7,7 @@ import { deleteTemplateAction } from '@/app/actions/jobs'
 import { jobTemplates } from '@/db/schema'
 import { EXPENSE_LINES } from '@/lib/schedule-c'
 import { centsToInput } from '@/lib/money'
+import { FILING_STATUS_LABELS } from '@/lib/tax-estimate'
 import { authMode } from '@/lib/auth'
 import { authedDb } from '@/server/session'
 import { listCategories } from '@/server/purchases'
@@ -23,6 +24,7 @@ export default async function SettingsPage() {
   const templates = await db.select().from(jobTemplates).orderBy(asc(jobTemplates.name))
   const thisYear = Number((await today(db)).slice(0, 4))
   const rateYears = [...new Set([...Object.keys(s.mileageRates), String(thisYear)])].sort().reverse()
+  const incomeYears = [...new Set([...Object.keys(s.otherIncome), String(thisYear), String(thisYear - 1)])].sort().reverse()
   return (
     <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader title="Settings" />
@@ -57,8 +59,25 @@ export default async function SettingsPage() {
             <Field label="Invoice due in (days)"><Input name="invoiceDueDays" defaultValue={s.invoiceDueDays} inputMode="numeric" /></Field>
             <Field label="Equipment above" hint="De minimis safe harbor limit"><MoneyInput name="assetThreshold" defaultValue={centsToInput(s.assetThresholdCents)} /></Field>
             <Field label="1099-NEC flag at" hint="Check the current IRS threshold"><MoneyInput name="contractorThreshold" defaultValue={centsToInput(s.contractorThresholdCents)} /></Field>
-            <Field label="Tax set-aside %" hint="For the quarterly estimate"><Input name="setAsidePct" defaultValue={s.setAsidePct} inputMode="decimal" /></Field>
             <Field label="Time zone"><Input name="timezone" defaultValue={s.timezone} /></Field>
+          </div>
+        </Card>
+        <Card className="p-4">
+          <div className="mb-1 text-sm font-semibold">Tax estimate</div>
+          <div className="mb-3 text-xs text-fg-subtle">
+            The business’s profit is taxed on top of the rest of your household’s income, so the estimate needs both.
+            Other income is everything on your return that isn’t this business, before deductions: wages, a spouse’s pay, interest.
+          </div>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <Field label="Filing status" className="col-span-2">
+              <Select name="filingStatus" defaultValue={s.filingStatus}>
+                {Object.entries(FILING_STATUS_LABELS).map(([k, label]) => <option key={k} value={k}>{label}</option>)}
+              </Select>
+            </Field>
+            {incomeYears.map((y) => (
+              <Field key={y} label={`Other income ${y}`}><MoneyInput name={`otherIncome_${y}`} defaultValue={s.otherIncome[y] != null ? centsToInput(s.otherIncome[y]) : ''} /></Field>
+            ))}
+            <Field label="Set-aside %" hint="For years without tax tables"><Input name="setAsidePct" defaultValue={s.setAsidePct} inputMode="decimal" /></Field>
           </div>
         </Card>
         <Card className="p-4">

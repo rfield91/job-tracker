@@ -101,7 +101,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
       )}
 
       <Card>
-        <CardHeader title="Estimated tax set-aside" action={<span className="text-xs text-fg-subtle">{q.setAsidePct}% of profit (change in settings)</span>} />
+        <CardHeader title="Estimated tax set-aside" action={<span className="text-xs text-fg-subtle">{q.estimated ? <Link className="hover:underline" href={`/reports/tax?year=${year}`}>From the tax estimate</Link> : `${q.setAsidePct}% of profit (change in settings)`}</span>} />
         <div className="grid grid-cols-2 divide-line border-t border-line sm:grid-cols-4 sm:divide-x">
           {q.quarters.map((x) => (
             <div key={x.quarter} className="px-4 py-3">

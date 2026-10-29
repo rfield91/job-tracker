@@ -6,6 +6,8 @@ import type { FormState } from '@/lib/form-state'
 import { int, money, oneOf, optDate, optStr, reqDate, reqInt, reqMoney, scaled, str } from '@/lib/form'
 import { categories, type AssetTreatment } from '@/db/schema'
 import { EXPENSE_LINES } from '@/lib/schedule-c'
+import { parseMoney } from '@/lib/money'
+import { FILING_STATUS_LABELS, type FilingStatus } from '@/lib/tax-estimate'
 import { createAsset, deleteAsset, updateAsset } from '@/server/assets'
 import { createVehicle, parseVehicle } from '@/server/jobs'
 import { deleteCustomer, deleteVehicle, updateCustomer, updateVehicle } from '@/server/customers'
@@ -130,6 +132,15 @@ export async function saveSettingsAction(_: FormState, fd: FormData) {
         rates[m[1]] = n
       }
     }
+    const otherIncome: Record<string, number> = {}
+    for (const [k, v] of fd.entries()) {
+      const m = k.match(/^otherIncome_(\d{4})$/)
+      if (m && typeof v === 'string' && v.trim()) {
+        const cents = parseMoney(v)
+        if (cents == null || cents < 0) throw new Error(`Other income for ${m[1]} should be an amount`)
+        otherIncome[m[1]] = cents
+      }
+    }
     const newYear = str(fd, 'mileage_new_year')
     const newRate = str(fd, 'mileage_new_rate')
     if (newYear && newRate) rates[newYear] = Number(newRate)
@@ -155,6 +166,8 @@ export async function saveSettingsAction(_: FormState, fd: FormData) {
       assetThresholdCents: money(fd, 'assetThreshold') ?? 250000,
       contractorThresholdCents: money(fd, 'contractorThreshold') ?? 200000,
       setAsidePct: Number(str(fd, 'setAsidePct') || 0),
+      filingStatus: oneOf(fd, 'filingStatus', FILING_STATUSES, 'single'),
+      otherIncome,
       mileageRates: rates,
       timezone: str(fd, 'timezone') || 'America/New_York',
       ...(logoFileId !== undefined ? { logoFileId } : {}),
@@ -163,6 +176,7 @@ export async function saveSettingsAction(_: FormState, fd: FormData) {
 }
 
 const LINES = EXPENSE_LINES.map((l) => l.line)
+const FILING_STATUSES = Object.keys(FILING_STATUS_LABELS) as FilingStatus[]
 
 export async function saveCategoryAction(_: FormState, fd: FormData) {
   return run(async (db) => {

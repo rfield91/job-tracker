@@ -3,6 +3,7 @@ import type { Db } from '@/db'
 import { assets, categories, customers, jobs, payments, trips, type PaymentMethod, type PaymentPurpose } from '@/db/schema'
 import { estimatedTaxDueDates, formatDate, monthEnd, monthKey } from '@/lib/dates'
 import { lineLabel } from '@/lib/schedule-c'
+import { estimateNh, estimateTax, hasTaxTables } from '@/lib/tax-estimate'
 import { allocatedLines, costDate, stockOnHandCents, type AllocatedLine } from './ledger'
 import { jobNumber, listJobs } from './jobs'
 import { getSettings } from './settings'
@@ -199,6 +200,10 @@ export async function taxWorksheet(db: Db, year: number) {
 
   const grossIncomeCents = grossReceiptsCents - returnsCents
   const grossProfitCents = grossIncomeCents - cogsCents
+  const netBeforeDepreciationCents = grossProfitCents - totalExpensesCents
+  const equipmentDeductionCents = expensedEquipmentCents(assetRows)
+  const estimateProfitCents = netBeforeDepreciationCents - equipmentDeductionCents
+  const otherIncomeCents = settings.otherIncome[String(year)] ?? null
   return {
     year,
     settings,
@@ -218,7 +223,15 @@ export async function taxWorksheet(db: Db, year: number) {
     expenses,
     otherExpenses,
     totalExpensesCents,
-    netBeforeDepreciationCents: grossProfitCents - totalExpensesCents,
+    netBeforeDepreciationCents,
+    estimate: {
+      equipmentDeductionCents,
+      macrsCount: assetRows.filter((a) => a.treatment === 'macrs').length,
+      profitCents: estimateProfitCents,
+      otherIncomeCents,
+      federal: estimateTax(year, { profitCents: estimateProfitCents, otherIncomeCents: otherIncomeCents ?? 0, status: settings.filingStatus }),
+      nh: estimateNh({ grossIncomeCents, profitCents: estimateProfitCents }),
+    },
     mileage: { milesTenths, rateCentsPerMile: rate, deductionCents: mileageCents, tripCount: tripRows.length },
     assets: assetRows,
     contractors,
@@ -239,22 +252,48 @@ function lineSort(line: string) {
   return n * 10 + (line.endsWith('b') ? 1 : 0)
 }
 
-// Profit so far by estimated-tax quarter, with a set-aside suggestion.
+// Equipment written off in the year it's placed in service. Regular (MACRS)
+// depreciation is spread over years and left to the tax software.
+function expensedEquipmentCents(rows: { costCents: number; businessUsePct: number; treatment: string }[]) {
+  return rows
+    .filter((a) => a.treatment === 'de_minimis' || a.treatment === 'section_179' || a.treatment === 'bonus')
+    .reduce((s, a) => s + Math.round((a.costCents * a.businessUsePct) / 100), 0)
+}
+
+// Profit so far by estimated-tax quarter, with a set-aside suggestion. With
+// tax tables for the year, each quarter sets aside what its profit adds to
+// the year's estimated tax; otherwise a flat share of profit.
 export async function quarterlyEstimate(db: Db, year: number) {
   const settings = await getSettings(db)
   const { rows } = await monthlyReport(db, year)
+  const assetRows = await db.select().from(assets)
+    .where(and(gte(assets.placedInServiceOn, `${year}-01-01`), lte(assets.placedInServiceOn, `${year}-12-31`)))
   const ranges = [[1, 3], [4, 5], [6, 8], [9, 12]]
   const due = estimatedTaxDueDates(year)
+  const otherIncomeCents = settings.otherIncome[String(year)] ?? 0
+  const taxOn = (profitCents: number) =>
+    estimateTax(year, { profitCents, otherIncomeCents, status: settings.filingStatus })?.totalCents ?? 0
+  const estimated = hasTaxTables(year)
   let cumulative = 0
+  let taxSoFar = 0
   return {
     setAsidePct: settings.setAsidePct,
+    estimated,
     quarters: ranges.map(([a, b], i) => {
+      const inQuarter = (d: string) => Number(d.slice(5, 7)) >= a && Number(d.slice(5, 7)) <= b
       const profit = rows.slice(a - 1, b).reduce((s, r) => s + r.profitCents, 0)
+        - expensedEquipmentCents(assetRows.filter((x) => inQuarter(x.placedInServiceOn)))
       cumulative += profit
+      let setAside = Math.max(0, Math.round((profit * settings.setAsidePct) / 100))
+      if (estimated) {
+        const tax = taxOn(cumulative)
+        setAside = Math.max(0, tax - taxSoFar)
+        taxSoFar = Math.max(taxSoFar, tax)
+      }
       return {
         ...due[i],
         profitCents: profit,
-        setAsideCents: Math.max(0, Math.round((profit * settings.setAsidePct) / 100)),
+        setAsideCents: setAside,
         cumulativeCents: cumulative,
       }
     }),
