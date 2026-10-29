@@ -6,25 +6,25 @@ Google Sheets. See `docs/PLAN.md` for the design.
 ## Run it locally
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open http://localhost:3000. With no environment variables set, it runs
 signed out with an embedded Postgres in `.data/pglite` and stores receipts
 in `.data/uploads` (both gitignored). Delete `.data` to start over.
 
-- `npm test`: unit and database tests (in-memory Postgres)
-- `npm run typecheck`, `npm run lint`
-- `npm run db:generate`: new migration after editing `src/db/schema.ts`
-- `npm run db:migrate`: apply migrations to Neon (`DATABASE_URL`)
+- `bun run test`: unit and database tests (in-memory Postgres)
+- `bun run typecheck`, `bun run lint`
+- `bun run db:generate`: new migration after editing `src/db/schema.ts`
+- `bun run db:migrate`: apply migrations to Neon (`DATABASE_URL`)
 
 ## Deploy (Vercel + Neon)
 
 1. **Neon**: create a project (or a database in an existing one). Copy the
    pooled connection string.
 2. **Vercel**: import the repo as a new project on your Pro team (Hobby is
-   for non-commercial use).
+   for non-commercial use). Vercel sees `bun.lock` and installs with Bun.
 3. **Blob**: in the Vercel project, Storage → create a Blob store with
    **private** access and connect it. That sets `BLOB_READ_WRITE_TOKEN`.
 4. **Google sign-in**: in Google Cloud Console → APIs & Services →
@@ -45,7 +45,7 @@ in `.data/uploads` (both gitignored). Delete `.data` to start over.
 6. Run the migrations once against Neon, then deploy:
 
    ```bash
-   DATABASE_URL="postgres://…" npm run db:migrate
+   DATABASE_URL="postgres://…" bun run db:migrate
    ```
 
    Run it again whenever a change adds a file to `drizzle/`.

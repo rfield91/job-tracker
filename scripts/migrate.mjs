@@ -1,5 +1,5 @@
 // Applies drizzle/ migrations to the Neon database in DATABASE_URL.
-// Run before deploying a schema change: npm run db:migrate
+// Run before deploying a schema change: bun run db:migrate
 import { Pool } from '@neondatabase/serverless'
 import { drizzle } from 'drizzle-orm/neon-serverless'
 import { migrate } from 'drizzle-orm/neon-serverless/migrator'

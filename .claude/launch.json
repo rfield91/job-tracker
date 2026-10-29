@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "job-tracker",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--port", "3210"],
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev", "--port", "3210"],
       "port": 3210
     }
   ]

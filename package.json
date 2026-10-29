@@ -2,6 +2,7 @@
   "name": "job-tracker",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -10,7 +11,7 @@
     "typecheck": "next typegen && tsc --noEmit",
     "lint": "oxlint src",
     "db:generate": "drizzle-kit generate",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "bun scripts/migrate.mjs"
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.5.13",
