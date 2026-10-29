@@ -15,6 +15,13 @@
       "when": 1793269812760,
       "tag": "0001_stock_and_quantity",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1793279348576,
+      "tag": "0002_quote_parts",
+      "breakpoints": true
     }
   ]
 }

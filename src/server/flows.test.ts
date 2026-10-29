@@ -3,10 +3,11 @@ import type Stripe from 'stripe'
 import { eq } from 'drizzle-orm'
 import { openPglite, type Db } from '@/db'
 import { assets, categories, paymentRequests, payments } from '@/db/schema'
-import { addJobLine, addPart, createJob, getJobDetail, jobTotals, listJobs, updateJob } from './jobs'
+import { addJobLine, addPart, createJob, getJobDetail, jobTotals, listJobs, recordPartPurchase, updateJob } from './jobs'
+import { createAsset } from './assets'
 import { addPayment, assignPayment, unmatchedPayments } from './payments'
 import { createPurchase, deletePurchase, getPurchase, listPurchases, updatePurchase } from './purchases'
-import { monthlyReport, taxWorksheet } from './reports'
+import { monthLog, monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
 import { listStock, returnToStock, takeFromStock } from './stock'
 import { addTrip } from './trips'
@@ -66,6 +67,37 @@ describe('jobs', () => {
     // A refund reopens the balance.
     await addPayment(db, { jobId: job.id, receivedOn: '2026-10-21', amountCents: 1000, purpose: 'refund', method: 'cash' })
     expect((await getJobDetail(db, job.id))!.job.status).toBe('done')
+  })
+})
+
+describe('quotes and completion dates', () => {
+  it('keeps quoted parts as estimates until they’re bought', async () => {
+    const job = await createJob(db, {
+      customer: { name: 'Sam' }, title: 'Downpipe', kind: 'fabrication', status: 'quote', openedOn: '2026-10-10',
+    })
+    const { line, purchaseId } = await addPart(db, job.id, { description: 'Flex section', partNumber: 'VB-1', quantityHundredths: 200, costCents: 6000, billedCents: 7500, purchasedOn: '2026-10-10' })
+    expect(purchaseId).toBeNull()
+    expect(line).toMatchObject({ estCostCents: 6000, partNumber: 'VB-1', quantityHundredths: 200 })
+    expect(await listPurchases(db, {})).toHaveLength(0)
+    expect((await jobTotals(db, [job.id])).get(job.id)!.costCents).toBe(0)
+
+    await updateJob(db, job.id, { status: 'in_progress' })
+    const bought = await recordPartPurchase(db, line.id, { costCents: 6200, vendor: 'Vibrant', purchasedOn: '2026-10-14' })
+    const d = (await getJobDetail(db, job.id))!
+    expect(d.totals.costCents).toBe(6200)
+    expect(d.lines[0]).toMatchObject({ estCostCents: null, purchaseLineId: d.costs[0].id })
+    expect(d.costs[0]).toMatchObject({ partNumber: 'VB-1', quantityHundredths: 200, purchaseId: bought.purchaseId })
+    await expect(recordPartPurchase(db, line.id, { costCents: 1, purchasedOn: '2026-10-14' })).rejects.toThrow()
+  })
+
+  it('dates catch-up jobs by their last payment, not the day they were entered', async () => {
+    const old = await newJob('March job', '2026-03-02')
+    await addPayment(db, { jobId: old.id, receivedOn: '2026-03-20', amountCents: 10000, purpose: 'final', method: 'cash' })
+    await updateJob(db, old.id, { status: 'done' })
+    expect((await getJobDetail(db, old.id))!.job.completedOn).toBe('2026-03-20')
+
+    const paid = await createJob(db, { customer: { name: 'Pat' }, title: 'April job', kind: 'service', status: 'paid', openedOn: '2026-04-05' })
+    expect((await getJobDetail(db, paid.id))!.job.completedOn).toBe('2026-04-05')
   })
 })
 
@@ -193,6 +225,26 @@ describe('reports', () => {
     expect(w.assets.map((a) => a.description)).toEqual(['Lathe'])
     expect(w.byMethod).toEqual([{ method: 'paypal', count: 1, grossCents: 50000, refundCents: 0, feeCents: 1500 }])
     expect(w.netBeforeDepreciationCents).toBe(50000 - 38000 - 6000 - 1500 - 1715)
+  })
+})
+
+describe('month log', () => {
+  it('lists payments, receipts and equipment for a month', async () => {
+    const job = await newJob()
+    await addPart(db, job.id, { description: '3" tubing', costCents: 14200, billedCents: 18500, vendor: 'Summit', purchasedOn: '2026-10-12' })
+    await addPayment(db, { jobId: job.id, receivedOn: '2026-10-20', amountCents: 18500, purpose: 'final', method: 'venmo', feeCents: 350 })
+    await createAsset(db, { description: 'Bandsaw', placedInServiceOn: '2026-10-05', costCents: 45000, businessUsePct: 100, treatment: 'undecided' })
+    await createAsset(db, { description: 'Old welder', placedInServiceOn: '2026-09-05', costCents: 90000, businessUsePct: 100, treatment: 'undecided' })
+
+    const log = await monthLog(db, '2026-10')
+    expect(log.entries.map((e) => [e.date, e.kind, e.amountCents])).toEqual([
+      ['2026-10-05', 'equipment', -45000],
+      ['2026-10-12', 'cost', -14200],
+      ['2026-10-20', 'income', 18150],
+    ])
+    expect(log.summary).toMatchObject({ revenueCents: 18500, cogsCents: 14200, feeCents: 350, equipmentCents: 45000, profitCents: 18500 - 14200 - 350 })
+    const { rows } = await monthlyReport(db, 2026)
+    expect(rows.map((r) => r.equipmentCents).slice(8, 10)).toEqual([90000, 45000])
   })
 })
 

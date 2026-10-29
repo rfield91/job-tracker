@@ -1,10 +1,10 @@
-import { and, count, gte, isNull, lte } from 'drizzle-orm'
+import { and, count, eq, gte, isNull, lte } from 'drizzle-orm'
 import type { Db } from '@/db'
-import { assets, categories, payments, trips, type PaymentMethod } from '@/db/schema'
-import { estimatedTaxDueDates, monthKey } from '@/lib/dates'
+import { assets, categories, customers, jobs, payments, trips, type PaymentMethod, type PaymentPurpose } from '@/db/schema'
+import { estimatedTaxDueDates, formatDate, monthKey } from '@/lib/dates'
 import { lineLabel } from '@/lib/schedule-c'
 import { allocatedLines, costDate, stockOnHandCents, type AllocatedLine } from './ledger'
-import { listJobs } from './jobs'
+import { jobNumber, listJobs } from './jobs'
 import { getSettings } from './settings'
 
 // Everything here is cash basis: income on the date it was received, costs
@@ -17,7 +17,11 @@ async function periodData(db: Db, p: Period) {
   const lines = await allocatedLines(db, p)
   const pays = await db.select().from(payments)
     .where(and(gte(payments.receivedOn, p.from), lte(payments.receivedOn, p.to)))
-  return { lines, pays }
+  // Equipment comes from the assets table, so pieces entered on the
+  // Equipment page count as well as ones bought through a purchase.
+  const equipment = await db.select().from(assets)
+    .where(and(gte(assets.placedInServiceOn, p.from), lte(assets.placedInServiceOn, p.to)))
+  return { lines, pays, equipment }
 }
 
 function lineKind(l: AllocatedLine) {
@@ -41,7 +45,12 @@ export type MonthRow = {
   profitCents: number
 }
 
-function summarize(month: string, lines: AllocatedLine[], pays: { amountCents: number; feeCents: number }[]): MonthRow {
+function summarize(
+  month: string,
+  lines: AllocatedLine[],
+  pays: { amountCents: number; feeCents: number }[],
+  equipment: { costCents: number }[],
+): MonthRow {
   const row: MonthRow = {
     month, revenueCents: 0, cogsCents: 0, expenseCents: 0, feeCents: 0,
     equipmentCents: 0, stockCents: 0, unassignedCents: 0, profitCents: 0,
@@ -54,31 +63,32 @@ function summarize(month: string, lines: AllocatedLine[], pays: { amountCents: n
     const k = lineKind(l)
     if (k === 'cogs') row.cogsCents += l.allocatedCents
     else if (k === 'expense') row.expenseCents += l.allocatedCents
-    else if (k === 'equipment') row.equipmentCents += l.allocatedCents
     else if (k === 'stock') row.stockCents += l.allocatedCents
-    else row.unassignedCents += l.allocatedCents
+    else if (k === 'unassigned') row.unassignedCents += l.allocatedCents
   }
+  row.equipmentCents = equipment.reduce((a, e) => a + e.costCents, 0)
   row.profitCents = row.revenueCents - row.cogsCents - row.expenseCents - row.feeCents
   return row
 }
 
 export async function monthlyReport(db: Db, year: number) {
-  const { lines, pays } = await periodData(db, { from: `${year}-01-01`, to: `${year}-12-31` })
+  const { lines, pays, equipment } = await periodData(db, { from: `${year}-01-01`, to: `${year}-12-31` })
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
   const rows = months.map((m) => summarize(
     m,
     lines.filter((l) => monthKey(costDate(l)) === m),
     pays.filter((p) => monthKey(p.receivedOn) === m),
+    equipment.filter((e) => monthKey(e.placedInServiceOn) === m),
   ))
-  const total = summarize('total', lines, pays)
+  const total = summarize('total', lines, pays, equipment)
   return { rows, total }
 }
 
 export async function dashboard(db: Db, today: string) {
   const month = monthKey(today)
   const year = Number(today.slice(0, 4))
-  const { lines, pays } = await periodData(db, { from: `${month}-01`, to: `${month}-31` })
-  const thisMonth = summarize(month, lines, pays)
+  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: `${month}-31` })
+  const thisMonth = summarize(month, lines, pays, equipment)
   const open = await listJobs(db, { status: 'open' })
   const done = await listJobs(db, { status: 'done' })
   const unpaid = done.filter((j) => j.totals.balanceCents > 0)
@@ -264,3 +274,102 @@ export async function jobsReport(db: Db, year: number) {
   return { rows, totals }
 }
 
+
+const PURPOSE_LABELS: Record<PaymentPurpose, string> = { deposit: 'Deposit', progress: 'Progress', final: 'Final', refund: 'Refund' }
+const METHOD_LABELS: Record<PaymentMethod, string> = {
+  cash: 'Cash', check: 'Check', venmo: 'Venmo', paypal: 'PayPal', zelle: 'Zelle', stripe: 'Stripe', card: 'Card', other: 'Other',
+}
+
+export type LogEntry = {
+  key: string
+  date: string
+  kind: 'income' | 'cost' | 'equipment'
+  title: string
+  detail: string
+  href: string | null
+  // Signed: income positive, costs negative. Only profitCents is in profit.
+  amountCents: number
+  profitCents: number
+  items: { label: string; to: string; cents: number; inProfit: boolean }[]
+}
+
+// Everything that moved money in a month, oldest first: payments, receipts
+// (and stock taken onto jobs, on the day it was used) and equipment.
+export async function monthLog(db: Db, month: string) {
+  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: `${month}-31` })
+  const summary = summarize(month, lines, pays, equipment)
+  const jobRows = await db.select({ id: jobs.id, year: jobs.year, seq: jobs.seq, title: jobs.title, customer: customers.name })
+    .from(jobs).innerJoin(customers, eq(customers.id, jobs.customerId))
+  const jobById = new Map(jobRows.map((j) => [j.id, j]))
+  const catById = new Map((await db.select().from(categories)).map((c) => [c.id, c.name]))
+  const entries: LogEntry[] = []
+
+  for (const p of pays) {
+    const j = p.jobId ? jobById.get(p.jobId) : undefined
+    const items = p.feeCents ? [{ label: 'Processing fee', to: '', cents: -p.feeCents, inProfit: true }] : []
+    entries.push({
+      key: `pay-${p.id}`,
+      date: p.receivedOn,
+      kind: 'income',
+      title: j ? `#${jobNumber(j)} ${j.title}` : `${p.payerName ?? 'Payment'} (not matched to a job)`,
+      detail: [j?.customer, PURPOSE_LABELS[p.purpose], METHOD_LABELS[p.method]].filter(Boolean).join(' · '),
+      href: j ? `/jobs/${j.id}` : '/payments/unmatched',
+      amountCents: p.amountCents - p.feeCents,
+      profitCents: p.amountCents - p.feeCents,
+      items,
+    })
+  }
+
+  const groups = new Map<string, AllocatedLine[]>()
+  for (const l of lines) {
+    const key = `${l.purchaseId}-${costDate(l)}`
+    groups.set(key, [...(groups.get(key) ?? []), l])
+  }
+  for (const [key, ls] of groups) {
+    const p = ls[0].purchase
+    const fromStock = ls.every((l) => l.usedOn != null)
+    const items = ls.map((l) => {
+      const k = lineKind(l)
+      const j = l.jobId ? jobById.get(l.jobId) : undefined
+      const to = k === 'stock' ? 'Stock'
+        : k === 'equipment' ? 'Equipment'
+        : k === 'expense' ? catById.get(l.categoryId!) ?? 'Expense'
+        : j ? `#${jobNumber(j)} ${j.title}` : 'Needs a job or category'
+      return { label: l.description || p.vendor, to, cents: -l.allocatedCents, inProfit: k === 'cogs' || k === 'expense' }
+    })
+    const amountCents = items.reduce((a, i) => a + i.cents, 0)
+    entries.push({
+      key: `buy-${key}`,
+      date: costDate(ls[0]),
+      kind: 'cost',
+      title: fromStock ? `From stock: ${p.vendor}` : p.vendor,
+      detail: fromStock ? `bought ${formatDate(p.purchasedOn)}` : '',
+      href: `/purchases/${p.id}`,
+      amountCents,
+      profitCents: items.filter((i) => i.inProfit).reduce((a, i) => a + i.cents, 0),
+      items,
+    })
+  }
+
+  // Equipment bought through a purchase is already in that receipt's entry.
+  const linked = new Set(lines.map((l) => l.assetId).filter((x): x is number => x != null))
+  for (const e of equipment) {
+    if (linked.has(e.id)) continue
+    entries.push({
+      key: `asset-${e.id}`,
+      date: e.placedInServiceOn,
+      kind: 'equipment',
+      title: e.description,
+      detail: 'Equipment, depreciated on the return',
+      href: '/equipment',
+      amountCents: -e.costCents,
+      profitCents: 0,
+      items: [],
+    })
+  }
+
+  entries.sort((a, b) => a.date.localeCompare(b.date) || (a.kind === 'income' ? -1 : 1))
+  const finished = (await listJobs(db, {}))
+    .filter((j) => (j.job.status === 'done' || j.job.status === 'paid') && j.job.completedOn && monthKey(j.job.completedOn) === month)
+  return { summary, entries, finished }
+}

@@ -1,9 +1,10 @@
 import Link from 'next/link'
 import { FileText, Download } from 'lucide-react'
-import { Card, CardHeader, cx, LinkButton, Money, PageHeader } from '@/components/ui'
+import { Badge, Card, CardHeader, cx, LinkButton, Money, PageHeader } from '@/components/ui'
 import { formatDate, monthName } from '@/lib/dates'
 import { authedDb } from '@/server/session'
 import { monthlyReport, quarterlyEstimate } from '@/server/reports'
+import { listAssets, TREATMENT_LABELS } from '@/server/assets'
 import { today } from '@/server/settings'
 import { YearTabs } from '@/components/year-tabs'
 
@@ -17,6 +18,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
   const year = typeof sp.year === 'string' ? Number(sp.year) : thisYear
   const { rows, total } = await monthlyReport(db, year)
   const q = await quarterlyEstimate(db, year)
+  const equipment = (await listAssets(db)).filter((r) => r.asset.placedInServiceOn.startsWith(`${year}-`))
   const showRows = year === thisYear ? rows.filter((r) => r.month <= now.slice(0, 7)) : rows
   return (
     <div className="space-y-4">
@@ -50,7 +52,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
               {showRows.map((r) => (
                 <tr key={r.month} className="hover:bg-hover">
                   <td className="px-4 py-2">
-                    <Link href={`/purchases?year=${year}&month=${r.month.slice(5)}`} className="hover:underline">{monthName(r.month, true)}</Link>
+                    <Link href={`/reports/month?m=${r.month}`} className="hover:underline">{monthName(r.month, true)}</Link>
                   </td>
                   <td className="px-2 py-2 text-right"><Money cents={r.revenueCents} /></td>
                   <td className="px-2 py-2 text-right text-fg-muted"><Money cents={r.cogsCents} /></td>
@@ -81,6 +83,22 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
           {total.unassignedCents > 0 && <> <Link href="/purchases?needsHome=1" className="text-warn underline">Some purchases still need a job or category.</Link></>}
         </div>
       </Card>
+
+      {equipment.length > 0 && (
+        <Card>
+          <CardHeader title={`Equipment placed in service in ${year}`} action={<Link href="/equipment" className="text-xs text-fg-muted hover:text-fg">Edit</Link>} />
+          <div className="divide-y divide-line border-t border-line">
+            {equipment.map(({ asset: a }) => (
+              <div key={a.id} className="flex items-center gap-3 px-4 py-2">
+                <span className="w-14 shrink-0 text-xs text-fg-subtle">{formatDate(a.placedInServiceOn, { year: false })}</span>
+                <span className="min-w-0 flex-1 truncate text-sm">{a.description}</span>
+                <Badge tone={a.treatment === 'undecided' ? 'warn' : 'neutral'}>{TREATMENT_LABELS[a.treatment]}</Badge>
+                <Money cents={a.costCents} className="text-sm" />
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
 
       <Card>
         <CardHeader title="Estimated tax set-aside" action={<span className="text-xs text-fg-subtle">{q.setAsidePct}% of profit (change in settings)</span>} />

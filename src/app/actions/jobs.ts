@@ -7,7 +7,7 @@ import { int, money, oneOf, optDate, optStr, reqDate, reqInt, reqMoney, scaled, 
 import { laborAmount, parseMoney } from '@/lib/money'
 import { jobTemplates, type JobKind, type JobLineType, type JobStatus, type PaymentPurpose, type PaymentMethod } from '@/db/schema'
 import {
-  addJobLine, addPart, billCost, createJob, deleteJob, deleteJobLine, parseVehicle, saveAsTemplate,
+  addJobLine, addPart, billCost, createJob, deleteJob, deleteJobLine, parseVehicle, recordPartPurchase, saveAsTemplate,
   updateJob, updateJobLine,
 } from '@/server/jobs'
 import { addPayment, assignPayment, deletePayment, updatePayment } from '@/server/payments'
@@ -147,7 +147,24 @@ export async function updateLineAction(_: FormState, fd: FormData) {
       })
       return
     }
-    await updateJobLine(db, id, { type, description, amountCents: reqMoney(fd, 'amount', 'an amount') })
+    await updateJobLine(db, id, {
+      type,
+      description,
+      amountCents: reqMoney(fd, 'amount', 'an amount'),
+      ...(fd.has('estCost') ? { estCostCents: money(fd, 'estCost') } : {}),
+    })
+  })
+}
+
+export async function recordPartPurchaseAction(_: FormState, fd: FormData) {
+  return run(async (db) => {
+    const { purchaseId } = await recordPartPurchase(db, reqInt(fd, 'id'), {
+      costCents: reqMoney(fd, 'cost', 'what you paid'),
+      vendor: optStr(fd, 'vendor'),
+      purchasedOn: reqDate(fd, 'purchasedOn'),
+      method: optStr(fd, 'method'),
+    })
+    await saveUploads(db, fd.getAll('receipt'), { kind: 'receipt', purchaseId })
   })
 }
 

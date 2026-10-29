@@ -146,6 +146,11 @@ export const jobLines = pgTable('job_lines', {
   amountCents: integer('amount_cents').notNull(),
   // For parts: the purchase line that holds the cost.
   purchaseLineId: integer('purchase_line_id').references(() => purchaseLines.id, { onDelete: 'set null' }),
+  // Parts not bought yet (quotes): the expected cost, which isn't a purchase
+  // and counts nowhere until it's bought.
+  estCostCents: integer('est_cost_cents'),
+  partNumber: text('part_number'),
+  quantityHundredths: integer('quantity_hundredths'),
   sortOrder: integer('sort_order').notNull().default(0),
 }, (t) => [index('job_lines_job_idx').on(t.jobId)])
 

@@ -5,9 +5,9 @@ import {
   purchases, vehicles,
   type Job, type JobKind, type JobLineType, type JobStatus, type Vehicle,
 } from '@/db/schema'
-import { yearOf } from '@/lib/dates'
+import { monthKey, todayIn, yearOf } from '@/lib/dates'
 import { allocatedLines } from './ledger'
-import { today } from './settings'
+import { getSettings } from './settings'
 
 export function jobNumber(j: { year: number; seq: number }) {
   return `${j.year}-${String(j.seq).padStart(3, '0')}`
@@ -133,6 +133,7 @@ export async function createJob(db: Db, input: NewJobInput): Promise<Job> {
       vehicleId = (await createVehicle(t, customerId, input.vehicle)).id
     }
     const year = yearOf(input.openedOn)
+    const status = input.status ?? 'in_progress'
     const [{ m }] = await t.select({ m: max(jobs.seq) }).from(jobs).where(eq(jobs.year, year))
     const [job] = await t.insert(jobs).values({
       year,
@@ -141,10 +142,13 @@ export async function createJob(db: Db, input: NewJobInput): Promise<Job> {
       vehicleId,
       title: input.title.trim(),
       kind: input.kind,
-      status: input.status ?? 'in_progress',
+      status,
       openedOn: input.openedOn,
       notes: input.notes || null,
     }).returning()
+    if (status === 'done' || status === 'paid') {
+      await t.update(jobs).set({ completedOn: await defaultCompletedOn(t, job) }).where(eq(jobs.id, job.id))
+    }
     if (input.templateId) {
       const [tpl] = await t.select().from(jobTemplates).where(eq(jobTemplates.id, input.templateId))
       if (tpl) {
@@ -161,13 +165,23 @@ export async function updateJob(db: Db, id: number, patch: JobPatch) {
   const next = { ...patch, updatedAt: new Date() }
   if (patch.status === 'done' || patch.status === 'paid') {
     const [cur] = await db.select().from(jobs).where(eq(jobs.id, id))
-    if (cur && !cur.completedOn && !patch.completedOn) {
-      const d = await today(db)
-      next.completedOn = cur.openedOn > d ? cur.openedOn : d
-    }
+    if (cur && !cur.completedOn && !patch.completedOn) next.completedOn = await defaultCompletedOn(db, cur)
   }
   await db.update(jobs).set(next).where(eq(jobs.id, id))
   if (patch.status === 'done') await refreshJobStatus(db, id)
+}
+
+// Today, unless the job was entered after the month it was opened (catching
+// up on old work): then the day of its last payment or purchase.
+async function defaultCompletedOn(db: Db, job: Job) {
+  const settings = await getSettings(db)
+  const d = todayIn(settings.timezone)
+  const entered = todayIn(settings.timezone, job.createdAt)
+  if (monthKey(entered) <= monthKey(job.openedOn)) return job.openedOn > d ? job.openedOn : d
+  const [{ paid }] = await db.select({ paid: max(payments.receivedOn) }).from(payments).where(eq(payments.jobId, job.id))
+  const [{ bought }] = await db.select({ bought: max(purchases.purchasedOn) }).from(purchaseLines)
+    .innerJoin(purchases, eq(purchases.id, purchaseLines.purchaseId)).where(eq(purchaseLines.jobId, job.id))
+  return [job.openedOn, paid, bought].filter((x): x is string => x != null && x <= d).sort().at(-1)!
 }
 
 export async function deleteJob(db: Db, id: number) {
@@ -271,6 +285,9 @@ export type JobLineInput = {
   rateCents?: number | null
   amountCents: number
   purchaseLineId?: number | null
+  estCostCents?: number | null
+  partNumber?: string | null
+  quantityHundredths?: number | null
 }
 
 export async function addJobLine(db: Db, jobId: number, input: JobLineInput) {
@@ -283,6 +300,9 @@ export async function addJobLine(db: Db, jobId: number, input: JobLineInput) {
     rateCents: input.rateCents ?? null,
     amountCents: input.type === 'discount' ? -Math.abs(input.amountCents) : input.amountCents,
     purchaseLineId: input.purchaseLineId ?? null,
+    estCostCents: input.estCostCents ?? null,
+    partNumber: input.partNumber?.trim() || null,
+    quantityHundredths: input.quantityHundredths ?? null,
     sortOrder: (m ?? -1) + 1,
   }).returning()
   await touch(db, jobId)
@@ -309,7 +329,8 @@ async function touch(db: Db, jobId: number) {
 }
 
 // A part added from the job page: one entry makes the purchase (cost) and the
-// invoice line (billed price). Without a cost it's just a billed line.
+// invoice line (billed price). Without a cost it's just a billed line. On a
+// quote nothing's bought yet, so the cost is kept on the line as an estimate.
 export async function addPart(db: Db, jobId: number, input: {
   description: string
   partNumber?: string | null
@@ -320,6 +341,19 @@ export async function addPart(db: Db, jobId: number, input: {
   purchasedOn: string
   method?: string | null
 }) {
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId))
+  if (!job) throw new Error('Job not found')
+  if (job.status === 'quote') {
+    const line = await addJobLine(db, jobId, {
+      type: 'part',
+      description: input.description,
+      amountCents: input.billedCents,
+      estCostCents: input.costCents ?? null,
+      partNumber: input.partNumber,
+      quantityHundredths: input.quantityHundredths ?? 100,
+    })
+    return { line, purchaseId: null }
+  }
   return db.transaction(async (tx) => {
     const t = tx as unknown as Db
     let purchaseId: number | null = null
@@ -348,6 +382,37 @@ export async function addPart(db: Db, jobId: number, input: {
       purchaseLineId,
     })
     return { line, purchaseId }
+  })
+}
+
+// A part quoted earlier, now bought: makes the purchase behind the line.
+export async function recordPartPurchase(db: Db, jobLineId: number, input: {
+  costCents: number
+  vendor?: string | null
+  purchasedOn: string
+  method?: string | null
+}) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db
+    const [jl] = await t.select().from(jobLines).where(eq(jobLines.id, jobLineId))
+    if (!jl || jl.type !== 'part') throw new Error('That line isn’t a part')
+    if (jl.purchaseLineId) throw new Error('That part already has a purchase')
+    const [p] = await t.insert(purchases).values({
+      purchasedOn: input.purchasedOn,
+      vendor: input.vendor?.trim() || 'Unknown vendor',
+      method: input.method || null,
+    }).returning()
+    const [pl] = await t.insert(purchaseLines).values({
+      purchaseId: p.id,
+      description: jl.description,
+      partNumber: jl.partNumber,
+      quantityHundredths: jl.quantityHundredths ?? 100,
+      amountCents: input.costCents,
+      jobId: jl.jobId,
+    }).returning()
+    await t.update(jobLines).set({ purchaseLineId: pl.id, estCostCents: null }).where(eq(jobLines.id, jl.id))
+    await touch(t, jl.jobId)
+    return { purchaseId: p.id }
   })
 }
 
