@@ -16,12 +16,15 @@ const target = z.discriminatedUnion('kind', [
   }),
   z.object({ kind: z.literal('category'), categoryId: z.number().int() }),
   z.object({ kind: z.literal('asset'), businessUsePct: z.number().int().min(1).max(100), description: z.string().nullish() }),
+  z.object({ kind: z.literal('stock') }),
   z.object({ kind: z.literal('none') }),
 ])
 
 const lines = z.array(z.object({
   id: z.number().int().nullish(),
   description: z.string().nullish(),
+  partNumber: z.string().nullish(),
+  quantityHundredths: z.number().int().positive('Quantity must be more than 0'),
   amountCents: z.number().int(),
   target,
   payee: z.string().nullish(),

@@ -6,15 +6,17 @@ import { ActionForm, SubmitButton } from './forms'
 import { FileInput } from './file-input'
 import { Button, Card, cx, Field, Input, MoneyInput, Notice, Select, Textarea } from './ui'
 import { createPurchaseAction, updatePurchaseAction } from '@/app/actions/purchases'
-import { formatMoney, parseMoney, withMarkup } from '@/lib/money'
+import { formatMoney, parseMoney, parseQuantity, withMarkup } from '@/lib/money'
 import type { PurchaseFormData } from '@/server/pickers'
 
-type Kind = 'job' | 'category' | 'asset' | null
+type Kind = 'job' | 'category' | 'stock' | 'asset' | null
 
 export type LineState = {
   key: string
   id?: number | null
   description: string
+  partNumber: string
+  quantity: string
   amount: string
   kind: Kind
   jobId: string
@@ -41,23 +43,24 @@ export type PurchaseInitial = {
 let keySeq = 0
 export function newLine(partial: Partial<LineState> = {}): LineState {
   return {
-    key: `l${++keySeq}`, description: '', amount: '', kind: null, jobId: '', categoryId: '', businessUse: '100',
+    key: `l${++keySeq}`, description: '', partNumber: '', quantity: '1', amount: '', kind: null, jobId: '', categoryId: '', businessUse: '100',
     bill: true, billed: '', billedTouched: false, contract: false, payee: '', ...partial,
   }
 }
 
-export function PurchaseForm({ data, today, initial, presetJobId, returnTo }: {
+export function PurchaseForm({ data, today, initial, presetJobId, presetStock, returnTo }: {
   data: PurchaseFormData
   today: string
   initial?: PurchaseInitial
   presetJobId?: number | null
+  presetStock?: boolean
   returnTo?: string
 }) {
   const editing = Boolean(initial)
   const [vendor, setVendor] = useState(initial?.vendor ?? '')
   const [total, setTotal] = useState(initial && initial.lines.length === 1 ? initial.lines[0].amount : '')
   const [split, setSplit] = useState(Boolean(initial && (initial.lines.length > 1 || initial.tax || initial.shipping)))
-  const [lines, setLines] = useState<LineState[]>(() => initial?.lines ?? [newLine(presetJobId ? { kind: 'job', jobId: String(presetJobId) } : {})])
+  const [lines, setLines] = useState<LineState[]>(() => initial?.lines ?? [newLine(presetJobId ? { kind: 'job', jobId: String(presetJobId) } : presetStock ? { kind: 'stock' } : {})])
   const [tax, setTax] = useState(initial?.tax ?? '')
   const [shipping, setShipping] = useState(initial?.shipping ?? '')
   const [more, setMore] = useState(Boolean(initial?.method || initial?.notes))
@@ -86,7 +89,9 @@ export function PurchaseForm({ data, today, initial, presetJobId, returnTo }: {
     const out = lines.map((l) => {
       const amountCents = parseMoney(split ? l.amount : total)
       if (amountCents == null) throw new Error(split ? 'Enter an amount on each line' : 'Enter the total')
-      if (l.kind == null) throw new Error('Choose what it was for: a job, the shop, or equipment')
+      const quantityHundredths = parseQuantity(l.quantity)
+      if (quantityHundredths == null) throw new Error(split ? 'Enter a quantity on each line' : 'Enter a quantity')
+      if (l.kind == null) throw new Error('Choose what it was for: a job, the shop, stock or equipment')
       const target = l.kind === 'job'
         ? {
           kind: 'job' as const,
@@ -97,11 +102,16 @@ export function PurchaseForm({ data, today, initial, presetJobId, returnTo }: {
         }
         : l.kind === 'category'
           ? { kind: 'category' as const, categoryId: Number(l.categoryId) }
-          : { kind: 'asset' as const, businessUsePct: Number(l.businessUse) || 100, description: l.description || null }
+          : l.kind === 'stock'
+            ? { kind: 'stock' as const }
+            : { kind: 'asset' as const, businessUsePct: Number(l.businessUse) || 100, description: l.description || null }
       if (l.kind === 'job' && !l.jobId) throw new Error('Pick the job')
       if (l.kind === 'category' && !l.categoryId) throw new Error('Pick a category')
       const payee = l.contract || catById.get(l.categoryId)?.line === '11' ? l.payee : ''
-      return { id: l.id ?? null, description: l.description || null, amountCents, target, payee: payee || null }
+      return {
+        id: l.id ?? null, description: l.description || null, partNumber: l.partNumber || null,
+        quantityHundredths, amountCents, target, payee: payee || null,
+      }
     })
     return JSON.stringify(out)
   }
@@ -204,6 +214,24 @@ export function PurchaseForm({ data, today, initial, presetJobId, returnTo }: {
   }
 }
 
+function QuantityFields({ line, totalCents, onChange }: {
+  line: LineState
+  totalCents: number | null
+  onChange: (patch: Partial<LineState>) => void
+}) {
+  const qty = parseQuantity(line.quantity)
+  return (
+    <div className="grid grid-cols-[1fr_6rem] gap-3">
+      <Field label="Part number">
+        <Input value={line.partNumber} onChange={(e) => onChange({ partNumber: e.target.value })} placeholder="Optional" autoComplete="off" />
+      </Field>
+      <Field label="Qty" hint={qty != null && qty !== 100 && totalCents != null ? `${formatMoney(Math.round((totalCents * 100) / qty))} each` : undefined}>
+        <Input value={line.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" required />
+      </Field>
+    </div>
+  )
+}
+
 function LineEditor({ line, index, split, data, catById, totalCents, onChange, onRemove }: {
   line: LineState
   index: number
@@ -233,8 +261,8 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
       )}
       <div>
         <span className="mb-1 block text-sm font-medium text-fg-muted">What was it for?</span>
-        <div className="grid grid-cols-3 gap-2">
-          {([['job', 'A job'], ['category', 'The shop'], ['asset', 'Equipment']] as const).map(([k, label]) => (
+        <div className="grid grid-cols-4 gap-2">
+          {([['job', 'A job'], ['category', 'The shop'], ['stock', 'Stock'], ['asset', 'Equipment']] as const).map(([k, label]) => (
             <button key={k} type="button" onClick={() => onChange({ kind: k })}
               className={cx('h-10 rounded-lg border text-sm',
                 line.kind === k ? 'border-accent bg-accent-soft font-medium text-accent' : 'border-line bg-surface text-fg-muted hover:bg-hover')}>
@@ -305,6 +333,15 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
         </div>
       )}
 
+      {line.kind === 'stock' && (
+        <div className="space-y-3">
+          {!split && (
+            <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="What was it (2.5in mandrel bends…)" required />
+          )}
+          <div className="text-xs text-fg-subtle">Materials for future jobs. Put them on a job from the Stock page or the job when you use them.</div>
+        </div>
+      )}
+
       {line.kind === 'asset' && (
         <div className="grid grid-cols-[1fr_7rem] gap-3">
           {!split
@@ -319,6 +356,8 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
           <div className="col-span-2 text-xs text-fg-subtle">Goes on the equipment list for depreciation. Lower the % if you also use it for personal projects.</div>
         </div>
       )}
+
+      {line.kind != null && <QuantityFields line={line} totalCents={totalCents} onChange={onChange} />}
     </div>
   )
 }

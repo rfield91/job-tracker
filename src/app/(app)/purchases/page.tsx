@@ -71,7 +71,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<'/purcha
                     {r.fileCount > 0 && <Paperclip size={12} className="shrink-0 text-fg-subtle" />}
                   </span>
                   <span className="block truncate text-xs text-fg-muted">
-                    {r.lines.map((l) => l.job ? `#${jobNumber(l.job)}` : l.category ? l.category.name : l.line.assetId ? 'Equipment' : 'Needs a home').join(' · ')}
+                    {r.lines.map((l) => l.job ? `#${jobNumber(l.job)}` : l.category ? l.category.name : l.line.assetId ? 'Equipment' : l.line.stock ? 'Stock' : 'Needs a home').join(' · ')}
                   </span>
                 </span>
                 {r.needsHome && <Badge tone="warn">Needs a home</Badge>}

@@ -87,10 +87,12 @@ export default async function TaxPage({ searchParams }: PageProps<'/reports/tax'
       </Section>
 
       <Section title="Part III · Cost of goods sold">
-        <Line n="35" label="Inventory at beginning of year" note="0 (parts are bought per job)" />
+        <Line n="35" label="Inventory at beginning of year (stock on the shelf)" cents={w.cogs.beginningStockCents} />
         <Line n="36" label="Purchases (parts and materials for jobs)" cents={w.cogs.purchasesCents} />
+        {w.cogs.stockBoughtCents > 0 && <Sub>Includes {formatMoney(w.cogs.stockBoughtCents)} bought for stock</Sub>}
         <Line n="37" label="Cost of labor (subcontracted on jobs)" cents={w.cogs.laborCents} />
-        <Line n="41" label="Inventory at end of year" note="0" />
+        <Line n="41" label="Inventory at end of year (stock on the shelf)" cents={w.cogs.endingStockCents} />
+        {w.cogs.endingStockCents > 0 && <Sub><Link className="underline" href="/stock">See what’s in stock</Link>. Count the shelf at year end and fix anything that was used or scrapped.</Sub>}
         <Line n="42" label="Cost of goods sold" cents={w.cogs.totalCents} strong />
       </Section>
 

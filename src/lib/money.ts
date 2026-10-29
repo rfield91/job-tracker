@@ -78,3 +78,13 @@ export function allocate(lines: number[], extra: number): number[] {
   for (let k = 0; rest > 0; k = (k + 1) % order.length, rest--) floored[order[k].i]++
   return lines.map((l, i) => l + floored[i])
 }
+
+// Quantities are stored in hundredths: 250 → '2.5'.
+export function formatQuantity(hundredths: number) {
+  return String(Math.round(hundredths) / 100)
+}
+
+export function parseQuantity(input: string | null | undefined): number | null {
+  const n = parseScaled(input, 100)
+  return n != null && n > 0 ? n : null
+}

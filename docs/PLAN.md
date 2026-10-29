@@ -44,9 +44,12 @@ instructions once.
 - **Parts bought for and resold on a customer job are cost of goods
   sold** (Schedule C Part III), not an expense. Tools, shop supplies,
   welding gas, software, insurance, etc. go on their own expense lines.
-- **Bulk stock** (oil, filters, tubing, wire, fasteners) is treated as
-  shop supplies when bought, which avoids inventory tracking. If a bulk buy
-  is clearly for one job, it can be allocated to that job instead.
+- **Consumables** (brake clean, rags, welding gas and wire, discs) are
+  shop supplies when bought. **Materials bought ahead** (tubing, bends,
+  flanges) are stock: a purchase line marked stock, moved onto a job (all
+  or part, by quantity) when used. Stock costs count on the day they're used,
+  and the tax worksheet reports what's on the shelf at each year end as
+  beginning and ending inventory (Part III lines 35 and 41).
 - **Equipment** (this year: lathe, bandsaw, welder) is tracked as assets,
   not expenses: description, date placed in service, cost, and business-use
   percentage. Tax software asks for exactly these and then offers the
@@ -342,7 +345,8 @@ somewhere; otherwise option 2 avoids a rushed cleanup in December.
 ## Status
 
 M0–M5 are built, plus templates, the mileage log, the 1099 list and the
-quarterly set-aside helper from M6. Deployment needs the accounts and keys
+quarterly set-aside helper from M6, and stock with part numbers and
+quantities on purchase lines. Deployment needs the accounts and keys
 listed in the README. Not built yet: reading vendor/date/total from receipt
 photos (needs an Anthropic API key), and the importer hasn’t been tried
 against the real jobs and big-ticket sheets.

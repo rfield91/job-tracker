@@ -7,7 +7,7 @@ import { Badge, Card, CardHeader, LinkButton, Money, Notice, PageHeader } from '
 import { deletePurchaseAction, uploadReceiptAction } from '@/app/actions/purchases'
 import { deleteFileAction } from '@/app/actions/jobs'
 import { formatDate } from '@/lib/dates'
-import { formatMoney } from '@/lib/money'
+import { formatMoney, formatQuantity } from '@/lib/money'
 import { lineLabel } from '@/lib/schedule-c'
 import { authedDb } from '@/server/session'
 import { jobNumber } from '@/server/jobs'
@@ -42,9 +42,17 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
           {d.lines.map(({ line, job, category, asset, allocatedCents, billed }) => (
             <div key={line.id} className="flex items-start gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
-                <div className="text-sm">{line.description || p.vendor}</div>
+                <div className="text-sm">
+                  {line.quantityHundredths !== 100 && <span className="text-fg-muted tabular">{formatQuantity(line.quantityHundredths)} × </span>}
+                  {line.description || p.vendor}
+                  {line.partNumber && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{line.partNumber}</span>}
+                </div>
                 <div className="mt-0.5 text-xs text-fg-muted">
-                  {job ? <Link href={`/jobs/${job.id}`} className="hover:underline">Job #{jobNumber(job)} {job.title}</Link>
+                  {job ? <>
+                    <Link href={`/jobs/${job.id}`} className="hover:underline">Job #{jobNumber(job)} {job.title}</Link>
+                    {line.usedOn && <> · from stock {formatDate(line.usedOn, { year: false })}</>}
+                  </>
+                    : line.stock ? <Link href="/stock" className="hover:underline">In stock</Link>
                     : category ? <>{category.name} <span className="text-fg-subtle">· Schedule C {category.scheduleLine}, {lineLabel(category.scheduleLine)}</span></>
                     : asset ? <Link href="/equipment" className="hover:underline">Equipment · {asset.businessUsePct}% business use</Link>
                     : <Badge tone="warn">Needs a job or category</Badge>}

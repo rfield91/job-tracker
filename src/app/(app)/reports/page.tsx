@@ -33,7 +33,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
           <a href={`/api/export?kind=csv&name=purchases&year=${year}`} className="inline-flex items-center gap-1 text-xs text-fg-muted hover:text-fg"><Download size={13} />Purchases CSV</a>
         } />
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[36rem] text-sm">
+          <table className="w-full min-w-[40rem] text-sm">
             <thead>
               <tr className="border-y border-line text-left text-xs text-fg-subtle">
                 <th className="px-4 py-2 font-medium">Month</th>
@@ -42,6 +42,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
                 <th className="px-2 py-2 text-right font-medium">Expenses</th>
                 <th className="px-2 py-2 text-right font-medium">Fees</th>
                 <th className="px-4 py-2 text-right font-medium">Profit</th>
+                <th className="px-2 py-2 text-right font-medium text-fg-subtle">Stock</th>
                 <th className="px-4 py-2 text-right font-medium text-fg-subtle">Equipment</th>
               </tr>
             </thead>
@@ -56,6 +57,7 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
                   <td className="px-2 py-2 text-right text-fg-muted"><Money cents={r.expenseCents} /></td>
                   <td className="px-2 py-2 text-right text-fg-muted"><Money cents={r.feeCents} /></td>
                   <td className={cx('px-4 py-2 text-right font-medium', r.profitCents < 0 && 'text-danger')}><Money cents={r.profitCents} /></td>
+                  <td className="px-2 py-2 text-right text-fg-subtle">{r.stockCents ? <Money cents={r.stockCents} /> : ''}</td>
                   <td className="px-4 py-2 text-right text-fg-subtle">{r.equipmentCents ? <Money cents={r.equipmentCents} /> : ''}</td>
                 </tr>
               ))}
@@ -68,13 +70,14 @@ export default async function ReportsPage({ searchParams }: PageProps<'/reports'
                 <td className="px-2 py-2 text-right"><Money cents={total.expenseCents} /></td>
                 <td className="px-2 py-2 text-right"><Money cents={total.feeCents} /></td>
                 <td className={cx('px-4 py-2 text-right', total.profitCents < 0 && 'text-danger')}><Money cents={total.profitCents} /></td>
+                <td className="px-2 py-2 text-right text-fg-subtle">{total.stockCents ? <Money cents={total.stockCents} /> : ''}</td>
                 <td className="px-4 py-2 text-right text-fg-subtle">{total.equipmentCents ? <Money cents={total.equipmentCents} /> : ''}</td>
               </tr>
             </tfoot>
           </table>
         </div>
         <div className="px-4 py-2 text-xs text-fg-subtle">
-          Cash basis: income on the day it was paid, costs on the day they were bought. Equipment is depreciated on the return, so it’s not in profit here.
+          Cash basis: income on the day it was paid, costs on the day they were bought. Stock counts when it goes on a job; the Stock column is what’s still on the shelf. Equipment is depreciated on the return, so it’s not in profit here.
           {total.unassignedCents > 0 && <> <Link href="/purchases?needsHome=1" className="text-warn underline">Some purchases still need a job or category.</Link></>}
         </div>
       </Card>

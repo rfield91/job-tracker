@@ -3,12 +3,13 @@ import type { Db } from '@/db'
 import { assets, categories, payments, trips, type PaymentMethod } from '@/db/schema'
 import { estimatedTaxDueDates, monthKey } from '@/lib/dates'
 import { lineLabel } from '@/lib/schedule-c'
-import { allocatedLines, type AllocatedLine } from './ledger'
+import { allocatedLines, costDate, stockOnHandCents, type AllocatedLine } from './ledger'
 import { listJobs } from './jobs'
 import { getSettings } from './settings'
 
 // Everything here is cash basis: income on the date it was received, costs
-// on the date they were bought.
+// on the date they were bought. Materials bought for stock count when they
+// go on a job (see costDate).
 
 type Period = { from: string; to: string }
 
@@ -20,6 +21,7 @@ async function periodData(db: Db, p: Period) {
 }
 
 function lineKind(l: AllocatedLine) {
+  if (l.stock) return 'stock'
   if (l.jobId) return 'cogs'
   if (l.categoryId) return 'expense'
   if (l.assetId) return 'equipment'
@@ -33,6 +35,8 @@ export type MonthRow = {
   expenseCents: number
   feeCents: number
   equipmentCents: number
+  // Bought this month and still on the shelf; not in profit until used.
+  stockCents: number
   unassignedCents: number
   profitCents: number
 }
@@ -40,7 +44,7 @@ export type MonthRow = {
 function summarize(month: string, lines: AllocatedLine[], pays: { amountCents: number; feeCents: number }[]): MonthRow {
   const row: MonthRow = {
     month, revenueCents: 0, cogsCents: 0, expenseCents: 0, feeCents: 0,
-    equipmentCents: 0, unassignedCents: 0, profitCents: 0,
+    equipmentCents: 0, stockCents: 0, unassignedCents: 0, profitCents: 0,
   }
   for (const p of pays) {
     row.revenueCents += p.amountCents
@@ -51,6 +55,7 @@ function summarize(month: string, lines: AllocatedLine[], pays: { amountCents: n
     if (k === 'cogs') row.cogsCents += l.allocatedCents
     else if (k === 'expense') row.expenseCents += l.allocatedCents
     else if (k === 'equipment') row.equipmentCents += l.allocatedCents
+    else if (k === 'stock') row.stockCents += l.allocatedCents
     else row.unassignedCents += l.allocatedCents
   }
   row.profitCents = row.revenueCents - row.cogsCents - row.expenseCents - row.feeCents
@@ -62,7 +67,7 @@ export async function monthlyReport(db: Db, year: number) {
   const months = Array.from({ length: 12 }, (_, i) => `${year}-${String(i + 1).padStart(2, '0')}`)
   const rows = months.map((m) => summarize(
     m,
-    lines.filter((l) => monthKey(l.purchase.purchasedOn) === m),
+    lines.filter((l) => monthKey(costDate(l)) === m),
     pays.filter((p) => monthKey(p.receivedOn) === m),
   ))
   const total = summarize('total', lines, pays)
@@ -119,11 +124,19 @@ export async function taxWorksheet(db: Db, year: number) {
     }
   }).filter((m) => m.count > 0)
 
-  // Part III: cost of goods sold
-  const jobLinesInYear = lines.filter((l) => l.jobId)
-  const cogsLaborCents = jobLinesInYear.filter((l) => l.payee).reduce((a, l) => a + l.allocatedCents, 0)
-  const cogsPurchasesCents = jobLinesInYear.filter((l) => !l.payee).reduce((a, l) => a + l.allocatedCents, 0)
-  const cogsCents = cogsLaborCents + cogsPurchasesCents
+  // Part III: cost of goods sold. Parts bought for a job are purchases in
+  // the year bought. Stock is a purchase in the year bought too, and what's
+  // still on the shelf at each year end is inventory, so it's deducted in the
+  // year it's used.
+  const sum = (ls: AllocatedLine[]) => ls.reduce((a, l) => a + l.allocatedCents, 0)
+  const directJobLines = lines.filter((l) => l.jobId && l.usedOn == null)
+  const cogsLaborCents = sum(directJobLines.filter((l) => l.payee))
+  const stockLines = await allocatedLines(db, { stockOrigin: true })
+  const stockBoughtCents = sum(stockLines.filter((l) => l.purchase.purchasedOn >= period.from && l.purchase.purchasedOn <= period.to))
+  const cogsPurchasesCents = sum(directJobLines.filter((l) => !l.payee)) + stockBoughtCents
+  const beginningStockCents = stockOnHandCents(stockLines, `${year - 1}-12-31`)
+  const endingStockCents = stockOnHandCents(stockLines, period.to)
+  const cogsCents = beginningStockCents + cogsPurchasesCents + cogsLaborCents - endingStockCents
 
   // Part II: expenses by line
   const byLine = new Map<string, { line: string; label: string; totalCents: number; items: { name: string; categoryId: number | null; totalCents: number }[] }>()
@@ -183,7 +196,14 @@ export async function taxWorksheet(db: Db, year: number) {
     returnsCents,
     grossIncomeCents,
     byMethod,
-    cogs: { purchasesCents: cogsPurchasesCents, laborCents: cogsLaborCents, totalCents: cogsCents },
+    cogs: {
+      beginningStockCents,
+      purchasesCents: cogsPurchasesCents,
+      stockBoughtCents,
+      laborCents: cogsLaborCents,
+      endingStockCents,
+      totalCents: cogsCents,
+    },
     grossProfitCents,
     expenses,
     otherExpenses,

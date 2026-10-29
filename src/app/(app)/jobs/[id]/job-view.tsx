@@ -12,9 +12,11 @@ import {
   deletePaymentAction, saveTemplateAction, setStatusAction, updateJobAction, updateLineAction, updatePaymentAction,
   uploadJobPhotosAction,
 } from '@/app/actions/jobs'
+import { returnToStockAction } from '@/app/actions/stock'
 import { requestPaymentAction, voidRequestAction } from '@/app/actions/stripe'
+import { UseStockForm, type StockOption } from '@/components/use-stock'
 import { formatDate } from '@/lib/dates'
-import { centsToInput, formatMoney, formatScaled, withMarkup } from '@/lib/money'
+import { centsToInput, formatMoney, formatQuantity, formatScaled, withMarkup } from '@/lib/money'
 import type { JobDetail } from '@/server/jobs'
 import type { JobLine, JobStatus, Payment, PaymentPurpose } from '@/db/schema'
 
@@ -24,9 +26,9 @@ const METHOD: Record<string, string> = {
   cash: 'Cash', check: 'Check', venmo: 'Venmo', paypal: 'PayPal', zelle: 'Zelle', stripe: 'Stripe', card: 'Card', other: 'Other',
 }
 
-type Adding = null | 'labor' | 'part' | 'fee' | 'discount' | 'payment' | 'request'
+type Adding = null | 'labor' | 'part' | 'stock' | 'fee' | 'discount' | 'payment' | 'request'
 
-export function JobView({ detail, number, today, laborRateCents, markupPct, stripe, customerHasEmail }: {
+export function JobView({ detail, number, today, laborRateCents, markupPct, stripe, customerHasEmail, stock }: {
   detail: JobDetail
   number: string
   today: string
@@ -34,6 +36,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   markupPct: number
   stripe: boolean
   customerHasEmail: boolean
+  stock: StockOption[]
 }) {
   const { job, customer, vehicle, lines, costs, payments, requests, photos, receiptFiles, totals, vehiclesForCustomer } = detail
   const [adding, setAdding] = useState<Adding>(null)
@@ -130,16 +133,21 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
           <div key={g.title} className="border-t border-line">
             <div className="px-4 pt-2 text-xs font-medium tracking-wide text-fg-subtle uppercase">{g.title}</div>
             {g.rows.map((l) => editingLine === l.id ? (
-              <LineEditor key={l.id} line={l} onDone={() => setEditingLine(null)} />
+              <LineEditor key={l.id} line={l} fromStock={Boolean(l.purchaseLineId && costById.get(l.purchaseLineId)?.usedOn)} onDone={() => setEditingLine(null)} />
             ) : (
               <button key={l.id} type="button" onClick={() => setEditingLine(l.id)}
                 className="flex w-full items-baseline gap-3 px-4 py-2 text-left hover:bg-hover">
                 <span className="min-w-0 flex-1">
-                  <span className="block text-sm">{l.description}</span>
+                  <span className="block text-sm">
+                    {l.description}
+                    {l.purchaseLineId && costById.get(l.purchaseLineId)?.partNumber && (
+                      <span className="ml-1.5 text-xs text-fg-subtle tabular">#{costById.get(l.purchaseLineId)!.partNumber}</span>
+                    )}
+                  </span>
                   <span className="block text-xs text-fg-subtle">
                     {l.type === 'labor' && l.hoursHundredths != null && `${formatScaled(l.hoursHundredths, 100)} h × ${formatMoney(l.rateCents ?? 0)}`}
                     {l.type === 'part' && (l.purchaseLineId && costById.get(l.purchaseLineId)
-                      ? `cost ${formatMoney(costById.get(l.purchaseLineId)!.allocatedCents)} · ${costById.get(l.purchaseLineId)!.purchase.vendor}`
+                      ? costLabel(costById.get(l.purchaseLineId)!)
                       : 'no cost recorded')}
                   </span>
                 </span>
@@ -160,11 +168,17 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
 
         {adding === 'labor' && <AddLabor jobId={job.id} rate={laborRateCents} onDone={() => setAdding(null)} />}
         {adding === 'part' && <AddPart jobId={job.id} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />}
+        {adding === 'stock' && (
+          <div className="border-t border-line p-4">
+            <UseStockForm items={stock} jobId={job.id} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />
+          </div>
+        )}
         {(adding === 'fee' || adding === 'discount') && <AddCharge jobId={job.id} type={adding} onDone={() => setAdding(null)} />}
 
         <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
           <Button size="sm" onClick={() => setAdding('labor')}><Plus size={14} />Labor</Button>
           <Button size="sm" onClick={() => setAdding('part')}><Plus size={14} />Part</Button>
+          {stock.length > 0 && <Button size="sm" onClick={() => setAdding('stock')}><Plus size={14} />From stock</Button>}
           <Button size="sm" onClick={() => setAdding('fee')}><Plus size={14} />Fee</Button>
           <Button size="sm" onClick={() => setAdding('discount')}><Plus size={14} />Discount</Button>
         </div>
@@ -312,6 +326,12 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   )
 }
 
+function costLabel(c: JobDetail['costs'][number]) {
+  const qty = c.quantityHundredths !== 100 ? `${formatQuantity(c.quantityHundredths)} × ` : ''
+  const source = c.usedOn ? `from stock, ${c.purchase.vendor}` : c.purchase.vendor
+  return `${qty}cost ${formatMoney(c.allocatedCents)} · ${source}`
+}
+
 function Total({ label, cents, strong }: { label: string; cents: number; strong?: boolean }) {
   return (
     <div>
@@ -374,6 +394,10 @@ function AddPart({ jobId, today, markupPct, onDone }: { jobId: number; today: st
       <ActionForm action={addPartAction} resetOnSuccess onSuccess={() => { setBilled(''); setTouched(false) }} className="space-y-3">
         <input type="hidden" name="jobId" value={jobId} />
         <Field label="Part"><Input name="description" placeholder="Vibrant resonator" autoFocus required /></Field>
+        <div className="grid grid-cols-[1fr_6rem] gap-3">
+          <Field label="Part number"><Input name="partNumber" placeholder="Optional" autoComplete="off" /></Field>
+          <Field label="Qty"><Input name="quantity" defaultValue="1" inputMode="decimal" required /></Field>
+        </div>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Your cost" hint="Leave empty if the customer supplied it">
             <MoneyInput name="cost" onChange={(e) => {
@@ -427,7 +451,7 @@ function AddCharge({ jobId, type, onDone }: { jobId: number; type: 'fee' | 'disc
   )
 }
 
-function LineEditor({ line, onDone }: { line: JobLine; onDone: () => void }) {
+function LineEditor({ line, fromStock, onDone }: { line: JobLine; fromStock: boolean; onDone: () => void }) {
   const hourly = line.type === 'labor' && line.hoursHundredths != null
   return (
     <div className="bg-raised px-4 py-3">
@@ -446,11 +470,19 @@ function LineEditor({ line, onDone }: { line: JobLine; onDone: () => void }) {
           </Field>
         )}
       </ActionForm>
-        <div className="mt-3 flex justify-between">
-          <ActionButton action={deleteLineAction} fields={{ id: line.id }} variant="danger" size="md"
-            confirm={line.purchaseLineId ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
-            <Trash2 size={15} />Remove
-          </ActionButton>
+        <div className="mt-3 flex flex-wrap justify-between gap-2">
+          <div className="flex gap-2">
+            <ActionButton action={deleteLineAction} fields={{ id: line.id }} variant="danger" size="md"
+              confirm={line.purchaseLineId ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
+              <Trash2 size={15} />Remove
+            </ActionButton>
+            {fromStock && (
+              <ActionButton action={returnToStockAction} fields={{ id: line.purchaseLineId! }} size="md"
+                confirm="Take this off the job and the invoice, and put it back in stock?">
+                Back to stock
+              </ActionButton>
+            )}
+          </div>
           <div className="flex gap-2">
             <Button onClick={onDone}>Cancel</Button>
             <SubmitButton form={`line-${line.id}`}>Save</SubmitButton>
@@ -469,9 +501,15 @@ function UnbilledCost({ cost, markupPct }: { cost: JobDetail['costs'][number]; m
         <span className="min-w-0 flex-1">
           <span className="block text-sm">{label}</span>
           <Link href={`/purchases/${cost.purchaseId}`} className="block text-xs text-fg-subtle hover:underline">
-            {cost.purchase.vendor} · {formatDate(cost.purchase.purchasedOn, { year: false })} · cost {formatMoney(cost.allocatedCents)}
+            {cost.quantityHundredths !== 100 && `${formatQuantity(cost.quantityHundredths)} × `}
+            {cost.purchase.vendor} · {cost.usedOn ? `from stock ${formatDate(cost.usedOn, { year: false })}` : formatDate(cost.purchase.purchasedOn, { year: false })} · cost {formatMoney(cost.allocatedCents)}
           </Link>
         </span>
+        {!open && cost.usedOn && (
+          <ActionButton action={returnToStockAction} fields={{ id: cost.id }} size="sm" confirm="Take this off the job and put it back in stock?">
+            Back to stock
+          </ActionButton>
+        )}
         {!open && <Button size="sm" onClick={() => setOpen(true)}>Bill it</Button>}
       </div>
       {open && (

@@ -12,14 +12,15 @@ export default async function NewPurchasePage({ searchParams }: PageProps<'/purc
   const jobId = typeof sp.job === 'string' ? Number(sp.job) : null
   return (
     <div className="mx-auto max-w-xl">
-      <PageHeader title="New purchase" back={jobId ? { href: `/jobs/${jobId}`, label: 'Job' } : { href: '/purchases', label: 'Purchases' }} />
+      <PageHeader title="New purchase" back={jobId ? { href: `/jobs/${jobId}`, label: 'Job' } : sp.stock === '1' ? { href: '/stock', label: 'Stock' } : { href: '/purchases', label: 'Purchases' }} />
       {sp.saved && <Notice tone="good" className="mb-3">Saved. Next one:</Notice>}
       <PurchaseForm
         key={String(sp.saved ?? '')}
         data={await purchaseFormData(db)}
         today={await today(db)}
         presetJobId={jobId}
-        returnTo={jobId ? `/jobs/${jobId}` : undefined}
+        presetStock={sp.stock === '1'}
+        returnTo={jobId ? `/jobs/${jobId}` : sp.stock === '1' ? '/stock' : undefined}
       />
     </div>
   )

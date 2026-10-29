@@ -5,9 +5,10 @@ import { openPglite, type Db } from '@/db'
 import { assets, categories, paymentRequests, payments } from '@/db/schema'
 import { addJobLine, addPart, createJob, getJobDetail, jobTotals, listJobs, updateJob } from './jobs'
 import { addPayment, assignPayment, unmatchedPayments } from './payments'
-import { createPurchase, deletePurchase, getPurchase, updatePurchase } from './purchases'
+import { createPurchase, deletePurchase, getPurchase, listPurchases, updatePurchase } from './purchases'
 import { monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
+import { listStock, returnToStock, takeFromStock } from './stock'
 import { addTrip } from './trips'
 import { commitImport } from './import'
 import { handleStripeEvent, invoiceItems, type StripeApi } from './stripe'
@@ -107,6 +108,54 @@ describe('purchases', () => {
   })
 })
 
+describe('stock', () => {
+  it('splits stock onto a job by quantity and counts it the year it’s used', async () => {
+    const job = await newJob('Turbo-back exhaust', '2025-12-01')
+    const p = await createPurchase(db, {
+      purchasedOn: '2025-12-10', vendor: 'Vibrant', shippingCents: 3000,
+      lines: [
+        { description: 'V-band clamp', partNumber: '1490', amountCents: 10000, target: { kind: 'job', jobId: job.id } },
+        { description: '3in mandrel bend', partNumber: '13050', quantityHundredths: 1000, amountCents: 20000, target: { kind: 'stock' } },
+      ],
+    })
+    expect(await listPurchases(db, { needsHome: true })).toHaveLength(0)
+    const [bends] = await listStock(db)
+    expect(bends).toMatchObject({ partNumber: '13050', quantityHundredths: 1000, allocatedCents: 22000 })
+
+    await expect(takeFromStock(db, bends.id, { jobId: job.id, quantityHundredths: 1100, usedOn: '2026-01-05' }))
+      .rejects.toThrow('Only 10 in stock')
+    const usedId = await takeFromStock(db, bends.id, {
+      jobId: job.id, quantityHundredths: 400, usedOn: '2026-01-05',
+      bill: { amountCents: 11000, description: '3in mandrel bends' },
+    })
+    const d = (await getPurchase(db, p.id))!
+    expect(d.totalCents).toBe(33000)
+    expect(d.lines.map((l) => [l.line.quantityHundredths, l.line.stock, l.allocatedCents]))
+      .toEqual([[100, false, 11000], [600, true, 13200], [400, false, 8800]])
+    const jd = (await getJobDetail(db, job.id))!
+    expect(jd.totals.costCents).toBe(19800)
+    expect(jd.lines.map((l) => [l.description, l.amountCents, l.purchaseLineId])).toEqual([['3in mandrel bends', 11000, usedId]])
+
+    // Bought in 2025: the clamp is a 2025 cost; the bends are inventory at
+    // the end of 2025 and the four used count in 2026.
+    const w25 = await taxWorksheet(db, 2025)
+    expect(w25.cogs).toMatchObject({ beginningStockCents: 0, purchasesCents: 33000, stockBoughtCents: 22000, endingStockCents: 22000, totalCents: 11000 })
+    const w26 = await taxWorksheet(db, 2026)
+    expect(w26.cogs).toMatchObject({ beginningStockCents: 22000, purchasesCents: 0, endingStockCents: 13200, totalCents: 8800 })
+    expect((await monthlyReport(db, 2025)).rows[11]).toMatchObject({ cogsCents: 11000, stockCents: 13200 })
+    expect((await monthlyReport(db, 2026)).rows[0]).toMatchObject({ cogsCents: 8800 })
+
+    // Back to stock: off the invoice, merged into what was left.
+    await returnToStock(db, usedId)
+    const back = (await getPurchase(db, p.id))!
+    expect(back.lines.map((l) => [l.line.quantityHundredths, l.line.amountCents, l.line.stock]))
+      .toEqual([[100, 10000, false], [1000, 20000, true]])
+    const after = (await getJobDetail(db, job.id))!
+    expect(after.lines).toHaveLength(0)
+    expect(after.totals.costCents).toBe(11000)
+  })
+})
+
 describe('reports', () => {
   it('builds the monthly report and Schedule C worksheet on a cash basis', async () => {
     await saveSettings(db, { mileageRates: { '2026': 70 } })
@@ -135,7 +184,7 @@ describe('reports', () => {
 
     const w = await taxWorksheet(db, 2026)
     expect(w.grossReceiptsCents).toBe(50000)
-    expect(w.cogs).toEqual({ purchasesCents: 8000, laborCents: 30000, totalCents: 38000 })
+    expect(w.cogs).toMatchObject({ beginningStockCents: 0, purchasesCents: 8000, laborCents: 30000, endingStockCents: 0, totalCents: 38000 })
     const line = (n: string) => w.expenses.find((e) => e.line === n)?.totalCents
     expect(line('22')).toBe(6000)
     expect(line('27a')).toBe(1500)

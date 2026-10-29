@@ -12,11 +12,15 @@ export type LineTarget =
   | { kind: 'job'; jobId: number; bill?: { amountCents: number; description: string } | null }
   | { kind: 'category'; categoryId: number }
   | { kind: 'asset'; businessUsePct: number; description?: string | null }
+  | { kind: 'stock' }
   | { kind: 'none' }
 
 export type PurchaseLineInput = {
   id?: number | null
   description?: string | null
+  partNumber?: string | null
+  // Defaults to 1 (100).
+  quantityHundredths?: number
   amountCents: number
   target: LineTarget
   payee?: string | null
@@ -36,6 +40,7 @@ function validate(input: PurchaseInput) {
   if (!input.vendor.trim()) throw new Error('Enter a vendor')
   if (input.lines.length === 0) throw new Error('Add at least one line')
   for (const l of input.lines) {
+    if (l.quantityHundredths != null && l.quantityHundredths <= 0) throw new Error('Quantity must be more than 0')
     if (l.target.kind === 'asset' && (l.target.businessUsePct < 1 || l.target.businessUsePct > 100)) {
       throw new Error('Business use must be between 1 and 100%')
     }
@@ -108,10 +113,15 @@ async function writeLines(db: Db, purchaseId: number, input: PurchaseInput, exis
     const values = {
       purchaseId,
       description: l.description?.trim() || null,
+      partNumber: l.partNumber?.trim() || null,
+      quantityHundredths: l.quantityHundredths ?? 100,
       amountCents: l.amountCents,
       jobId: l.target.kind === 'job' ? l.target.jobId : null,
       categoryId: l.target.kind === 'category' ? l.target.categoryId : null,
       assetId,
+      stock: l.target.kind === 'stock',
+      // Moving a line from stock to another job keeps the day it was used.
+      usedOn: l.target.kind === 'job' ? prev?.usedOn ?? null : null,
       payee: l.payee?.trim() || null,
       sortOrder: i,
     }
@@ -213,7 +223,7 @@ export async function listPurchases(db: Db, f: PurchaseFilter = {}) {
     const like = `%${f.q.trim()}%`
     where.push(or(ilike(purchases.vendor, like), ilike(purchases.notes, like),
       inArray(purchases.id, db.select({ id: purchaseLines.purchaseId }).from(purchaseLines)
-        .where(ilike(purchaseLines.description, like))))!)
+        .where(or(ilike(purchaseLines.description, like), ilike(purchaseLines.partNumber, like)))))!)
   }
   if (f.categoryId) {
     where.push(inArray(purchases.id, db.select({ id: purchaseLines.purchaseId }).from(purchaseLines)
@@ -221,7 +231,7 @@ export async function listPurchases(db: Db, f: PurchaseFilter = {}) {
   }
   if (f.needsHome) {
     where.push(inArray(purchases.id, db.select({ id: purchaseLines.purchaseId }).from(purchaseLines)
-      .where(and(isNull(purchaseLines.jobId), isNull(purchaseLines.categoryId), isNull(purchaseLines.assetId)))))
+      .where(and(isNull(purchaseLines.jobId), isNull(purchaseLines.categoryId), isNull(purchaseLines.assetId), eq(purchaseLines.stock, false)))))
   }
   const ps = await db.select().from(purchases).where(where.length ? and(...where) : undefined)
     .orderBy(desc(purchases.purchasedOn), desc(purchases.id)).limit(f.limit ?? 500)
@@ -241,7 +251,7 @@ export async function listPurchases(db: Db, f: PurchaseFilter = {}) {
       lines: ls,
       totalCents: ls.reduce((a, l) => a + l.line.amountCents, 0) + p.taxCents + p.shippingCents,
       fileCount: fileRows.filter((r) => r.purchaseId === p.id).length,
-      needsHome: ls.some((l) => !l.line.jobId && !l.line.categoryId && !l.line.assetId),
+      needsHome: ls.some((l) => !l.line.jobId && !l.line.categoryId && !l.line.assetId && !l.line.stock),
     }
   })
 }

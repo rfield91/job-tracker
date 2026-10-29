@@ -113,8 +113,12 @@ export async function addPartAction(_: FormState, fd: FormData) {
     const cost = money(fd, 'cost')
     const billed = money(fd, 'billed')
     if (billed == null && cost == null) throw new Error('Enter a cost or a billed price')
+    const quantity = scaled(fd, 'quantity', 100) ?? 100
+    if (quantity <= 0) throw new Error('Quantity must be more than 0')
     const { purchaseId } = await addPart(db, jobId, {
       description,
+      partNumber: optStr(fd, 'partNumber'),
+      quantityHundredths: quantity,
       costCents: cost,
       billedCents: billed ?? 0,
       vendor: optStr(fd, 'vendor'),

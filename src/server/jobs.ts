@@ -312,6 +312,8 @@ async function touch(db: Db, jobId: number) {
 // invoice line (billed price). Without a cost it's just a billed line.
 export async function addPart(db: Db, jobId: number, input: {
   description: string
+  partNumber?: string | null
+  quantityHundredths?: number
   billedCents: number
   costCents?: number | null
   vendor?: string | null
@@ -331,6 +333,8 @@ export async function addPart(db: Db, jobId: number, input: {
       const [pl] = await t.insert(purchaseLines).values({
         purchaseId: p.id,
         description: input.description,
+        partNumber: input.partNumber?.trim() || null,
+        quantityHundredths: input.quantityHundredths ?? 100,
         amountCents: input.costCents,
         jobId,
       }).returning()

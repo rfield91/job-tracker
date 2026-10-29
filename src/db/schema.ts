@@ -112,12 +112,21 @@ export const purchaseLines = pgTable('purchase_lines', {
   id: serial('id').primaryKey(),
   purchaseId: integer('purchase_id').notNull().references(() => purchases.id, { onDelete: 'cascade' }),
   description: text('description'),
+  partNumber: text('part_number'),
+  // In hundredths, so 2.5 ft of tubing is 250.
+  quantityHundredths: integer('quantity_hundredths').notNull().default(100),
+  // Line total, not unit price.
   amountCents: integer('amount_cents').notNull(),
-  // Exactly one of jobId / categoryId / assetId is set; none means it still
-  // needs a home (e.g. its job was deleted).
+  // Exactly one of jobId / categoryId / assetId / stock is set; none means it
+  // still needs a home (e.g. its job was deleted).
   jobId: integer('job_id').references(() => jobs.id, { onDelete: 'set null' }),
   categoryId: integer('category_id').references(() => categories.id),
   assetId: integer('asset_id').references(() => assets.id, { onDelete: 'set null' }),
+  // Materials on the shelf, not used on a job yet.
+  stock: boolean('stock').notNull().default(false),
+  // Set on lines taken from stock: the day they went on the job. Their cost
+  // counts on this date instead of the purchase date.
+  usedOn: date('used_on'),
   // Set for contract labor, for the 1099-NEC list.
   payee: text('payee'),
   sortOrder: integer('sort_order').notNull().default(0),

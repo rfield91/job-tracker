@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { PageHeader } from '@/components/ui'
 import { PurchaseForm, type PurchaseInitial } from '@/components/purchase-form'
-import { centsToInput } from '@/lib/money'
+import { centsToInput, formatQuantity } from '@/lib/money'
 import { authedDb } from '@/server/session'
 import { purchaseFormData } from '@/server/pickers'
 import { getPurchase } from '@/server/purchases'
@@ -27,8 +27,10 @@ export default async function EditPurchasePage({ params }: PageProps<'/purchases
       key: `e${line.id}`,
       id: line.id,
       description: line.description ?? (asset?.description ?? ''),
+      partNumber: line.partNumber ?? '',
+      quantity: formatQuantity(line.quantityHundredths),
       amount: centsToInput(line.amountCents),
-      kind: line.jobId ? 'job' : line.categoryId ? 'category' : line.assetId ? 'asset' : null,
+      kind: line.jobId ? 'job' : line.categoryId ? 'category' : line.assetId ? 'asset' : line.stock ? 'stock' : null,
       jobId: line.jobId ? String(line.jobId) : '',
       categoryId: line.categoryId ? String(line.categoryId) : '',
       businessUse: String(asset?.businessUsePct ?? 100),
