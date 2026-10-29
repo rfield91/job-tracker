@@ -1,7 +1,7 @@
 import Link from 'next/link'
 import { Paperclip, Plus, Search } from 'lucide-react'
 import { Badge, Card, Empty, Input, LinkButton, Money, PageHeader, Select } from '@/components/ui'
-import { formatDate } from '@/lib/dates'
+import { formatDate, monthEnd } from '@/lib/dates'
 import { authedDb } from '@/server/session'
 import { jobNumber } from '@/server/jobs'
 import { listCategories, listPurchases } from '@/server/purchases'
@@ -20,7 +20,7 @@ export default async function PurchasesPage({ searchParams }: PageProps<'/purcha
   const month = typeof sp.month === 'string' ? sp.month : ''
   const year = yearParam === 'all' ? null : Number(yearParam)
   const from = year ? (month ? `${year}-${month}-01` : `${year}-01-01`) : undefined
-  const to = year ? (month ? `${year}-${month}-31` : `${year}-12-31`) : undefined
+  const to = year ? (month ? monthEnd(`${year}-${month}`) : `${year}-12-31`) : undefined
   const rows = await listPurchases(db, { q, needsHome, categoryId, from, to })
   const cats = await listCategories(db)
   const total = rows.reduce((a, r) => a + r.totalCents, 0)

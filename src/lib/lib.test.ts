@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { allocate, formatMoney, laborAmount, parseMoney, withMarkup } from './money'
-import { addDays, parseDate, todayIn } from './dates'
+import { addDays, monthEnd, parseDate, todayIn } from './dates'
 import { guessMapping, normalize } from './import'
 import { toCsv } from './csv'
 import { signSession, verifySession } from './auth'
@@ -32,6 +32,10 @@ describe('money', () => {
 })
 
 describe('dates', () => {
+  it('finds the last day of a month', () => {
+    expect(['2026-04', '2026-02', '2028-02', '2026-12'].map(monthEnd)).toEqual(['2026-04-30', '2026-02-28', '2028-02-29', '2026-12-31'])
+  })
+
   it('parses sheet date formats', () => {
     expect(parseDate('2026-03-04')).toBe('2026-03-04')
     expect(parseDate('3/4/2026')).toBe('2026-03-04')

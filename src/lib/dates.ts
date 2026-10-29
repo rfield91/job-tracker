@@ -35,6 +35,12 @@ export function formatDate(date: string | null | undefined, opts: { year?: boole
   return opts.year === false ? s : `${s}, ${y}`
 }
 
+// Last day of a 'YYYY-MM' month, e.g. '2026-04' → '2026-04-30'.
+export function monthEnd(month: string) {
+  const d = new Date(Date.UTC(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0))
+  return d.toISOString().slice(0, 10)
+}
+
 export function addDays(date: string, days: number) {
   const d = new Date(`${date}T12:00:00Z`)
   d.setUTCDate(d.getUTCDate() + days)

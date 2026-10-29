@@ -1,7 +1,7 @@
 import { and, count, eq, gte, isNull, lte } from 'drizzle-orm'
 import type { Db } from '@/db'
 import { assets, categories, customers, jobs, payments, trips, type PaymentMethod, type PaymentPurpose } from '@/db/schema'
-import { estimatedTaxDueDates, formatDate, monthKey } from '@/lib/dates'
+import { estimatedTaxDueDates, formatDate, monthEnd, monthKey } from '@/lib/dates'
 import { lineLabel } from '@/lib/schedule-c'
 import { allocatedLines, costDate, stockOnHandCents, type AllocatedLine } from './ledger'
 import { jobNumber, listJobs } from './jobs'
@@ -87,7 +87,7 @@ export async function monthlyReport(db: Db, year: number) {
 export async function dashboard(db: Db, today: string) {
   const month = monthKey(today)
   const year = Number(today.slice(0, 4))
-  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: `${month}-31` })
+  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: monthEnd(month) })
   const thisMonth = summarize(month, lines, pays, equipment)
   const open = await listJobs(db, { status: 'open' })
   const done = await listJobs(db, { status: 'done' })
@@ -296,7 +296,7 @@ export type LogEntry = {
 // Everything that moved money in a month, oldest first: payments, receipts
 // (and stock taken onto jobs, on the day it was used) and equipment.
 export async function monthLog(db: Db, month: string) {
-  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: `${month}-31` })
+  const { lines, pays, equipment } = await periodData(db, { from: `${month}-01`, to: monthEnd(month) })
   const summary = summarize(month, lines, pays, equipment)
   const jobRows = await db.select({ id: jobs.id, year: jobs.year, seq: jobs.seq, title: jobs.title, customer: customers.name })
     .from(jobs).innerJoin(customers, eq(customers.id, jobs.customerId))
@@ -335,7 +335,7 @@ export async function monthLog(db: Db, month: string) {
         : k === 'equipment' ? 'Equipment'
         : k === 'expense' ? catById.get(l.categoryId!) ?? 'Expense'
         : j ? `#${jobNumber(j)} ${j.title}` : 'Needs a job or category'
-      return { label: l.description || p.vendor, to, cents: -l.allocatedCents, inProfit: k === 'cogs' || k === 'expense' }
+      return { label: l.description || p.vendor, to, cents: -l.allocatedCents || 0, inProfit: k === 'cogs' || k === 'expense' }
     })
     const amountCents = items.reduce((a, i) => a + i.cents, 0)
     entries.push({
