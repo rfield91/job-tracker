@@ -3,6 +3,7 @@ import { authedDb } from '@/server/session'
 import { getJobDetail, jobNumber } from '@/server/jobs'
 import { getSettings, today } from '@/server/settings'
 import { listStock } from '@/server/stock'
+import { listProducts } from '@/server/products'
 import { stripeEnabled } from '@/server/stripe'
 import { JobView } from './job-view'
 
@@ -29,6 +30,8 @@ export default async function JobPage({ params }: PageProps<'/jobs/[id]'>) {
       stripe={stripeEnabled()}
       customerHasEmail={Boolean(detail.customer.email)}
       stock={await listStock(db)}
+      products={(await listProducts(db, detail.job.year, { activeOnly: true }))
+        .map((p) => ({ id: p.id, name: p.name, priceCents: p.priceCents, canBuild: p.canBuild, hasParts: p.parts.length > 0 }))}
     />
   )
 }

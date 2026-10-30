@@ -30,7 +30,7 @@ export default async function JobsReportPage({ searchParams }: PageProps<'/repor
         subtitle={<YearTabs year={year} thisYear={thisYear} path="/reports/jobs" />}
         actions={<a href={`/api/export?kind=csv&name=jobs&year=${year}`} className="inline-flex items-center gap-1 text-sm text-fg-muted hover:text-fg"><Download size={14} />CSV</a>} />
       <div className="mb-3 flex gap-3 text-sm">
-        {[['', 'All'], ['service', 'Service'], ['fabrication', 'Fabrication']].map(([k, l]) => (
+        {[['', 'All'], ['service', 'Service'], ['fabrication', 'Fabrication'], ['sale', 'Sales']].map(([k, l]) => (
           <Link key={k} href={`/reports/jobs?year=${year}${k ? `&kind=${k}` : ''}`} className={k === kind ? 'font-semibold' : 'text-fg-muted hover:text-fg'}>{l}</Link>
         ))}
       </div>

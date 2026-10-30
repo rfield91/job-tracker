@@ -56,6 +56,14 @@ instructions once.
   day they're used,
   and the tax worksheet reports what's on the shelf at each year end as
   beginning and ending inventory (Part III lines 35 and 41).
+- **Products** are things sold ready-made (a bracket kit): a price and the
+  stock parts in one, matched by stock key. Hardware bought by the pack can
+  be a fractional part. The products page shows how many the shelf can make
+  and which part limits it. Selling one puts a single line on the job and
+  takes its parts off the shelf as stock uses billed on that line; it won't
+  sell more than stock covers. A **quick sale** makes a job of kind Sale
+  with that line, the shipping label as a purchase on the job, and the
+  payment, all on the sale date, and stays open for the next entry.
 - **Equipment** (this year: lathe, bandsaw, welder) is tracked as assets,
   not expenses: description, date placed in service, cost, and business-use
   percentage. Tax software asks for exactly these and then offers the
@@ -359,7 +367,7 @@ somewhere; otherwise option 2 avoids a rushed cleanup in December.
 
 M0–M5 are built, plus templates, the mileage log, the 1099 list and the
 quarterly set-aside helper from M6, and stock with part numbers and
-quantities on purchase lines. Deployment needs the accounts and keys
+quantities on purchase lines, and products with quick sales. Deployment needs the accounts and keys
 listed in the README. Not built yet: reading vendor/date/total from receipt
 photos (needs an Anthropic API key), and the importer hasn’t been tried
 against the real jobs and big-ticket sheets.

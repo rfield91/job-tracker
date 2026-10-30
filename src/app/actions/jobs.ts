@@ -15,7 +15,7 @@ import { deleteFile, saveUploads } from '@/server/files'
 import { createVehicle } from '@/server/jobs'
 import { run } from './run'
 
-const KINDS = ['service', 'fabrication'] as const satisfies readonly JobKind[]
+const KINDS = ['service', 'fabrication', 'sale'] as const satisfies readonly JobKind[]
 const STATUSES = ['quote', 'in_progress', 'done', 'paid'] as const satisfies readonly JobStatus[]
 const PURPOSES = ['deposit', 'progress', 'final', 'refund'] as const satisfies readonly PaymentPurpose[]
 const METHODS = ['cash', 'check', 'venmo', 'paypal', 'zelle', 'stripe', 'card', 'other'] as const satisfies readonly PaymentMethod[]

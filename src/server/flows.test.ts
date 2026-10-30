@@ -11,6 +11,7 @@ import { monthLog, monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
 import { billStockUse, listShopUses, listStock, returnToStock, takeFromStock, useForShop } from './stock'
 import { addTrip } from './trips'
+import { getProduct, listProducts, quickSale, saveProduct, sellProduct } from './products'
 import { commitImport } from './import'
 import { handleStripeEvent, invoiceItems, type StripeApi } from './stripe'
 
@@ -254,6 +255,64 @@ describe('stock', () => {
     await returnToStock(db, { useId: use.id })
     expect((await listStock(db))[0]).toMatchObject({ quantityHundredths: 200 })
     expect((await taxWorksheet(db, 2026)).cogs.shopUseCents).toBe(0)
+  })
+})
+
+describe('products', () => {
+  async function bracketKit() {
+    await createPurchase(db, {
+      purchasedOn: '2026-01-10', vendor: 'SendCutSend', shippingCents: 1000,
+      lines: [
+        { description: 'Splitter bracket A', partNumber: 'SCS-A', quantityHundredths: 400, amountCents: 8000, target: { kind: 'stock' } },
+        { description: 'Splitter bracket B', partNumber: 'SCS-B', quantityHundredths: 300, amountCents: 12000, target: { kind: 'stock' } },
+      ],
+    })
+    await createPurchase(db, {
+      purchasedOn: '2026-01-12', vendor: 'McMaster',
+      lines: [{ description: 'M8 bolts, 100 pack', partNumber: '91290A', quantityHundredths: 100, amountCents: 2000, target: { kind: 'stock' } }],
+    })
+    const stock = await listStock(db)
+    const key = (pn: string) => stock.find((g) => g.partNumber === pn)!.key
+    return saveProduct(db, null, {
+      name: 'NC/RX8 Splitter Brackets', priceCents: 24000,
+      parts: [
+        { stockKey: key('SCS-A'), label: 'Splitter bracket A', quantityHundredths: 200 },
+        { stockKey: key('SCS-B'), label: 'Splitter bracket B', quantityHundredths: 100 },
+        { stockKey: key('91290A'), label: 'M8 bolts', quantityHundredths: 8 },
+      ],
+    })
+  }
+
+  it('knows how many it can build and what the parts cost', async () => {
+    const kit = await bracketKit()
+    const p = (await getProduct(db, kit.id, 2026))!
+    // Shipping spreads by amount: A $40 + $2 each set, B $40 + $2, bolts $1.60.
+    expect(p).toMatchObject({ canBuild: 2, limitedBy: 'Splitter bracket A', costCents: 4200 + 4200 + 160 })
+  })
+
+  it('sells a product as one line with its parts as costs, and a quick sale with shipping and payment', async () => {
+    const kit = await bracketKit()
+    const job = await quickSale(db, {
+      soldOn: '2026-02-03', customer: { name: 'Online buyer' }, productId: kit.id, quantity: 1, priceCents: 24000,
+      shipping: { carrier: 'USPS', costCents: 1850 },
+      payment: { amountCents: 24000, method: 'paypal', feeCents: 870 },
+    })
+    const d = (await getJobDetail(db, job.id))!
+    expect(d.job).toMatchObject({ kind: 'sale', status: 'paid', completedOn: '2026-02-03', title: 'NC/RX8 Splitter Brackets' })
+    expect(d.lines.map((l) => [l.description, l.amountCents, l.productId])).toEqual([['NC/RX8 Splitter Brackets', 24000, kit.id]])
+    expect(d.costs.filter((c) => c.useId != null).every((c) => c.jobLineId === d.lines[0].id)).toBe(true)
+    expect(d.totals).toMatchObject({ billedCents: 24000, costCents: 8560 + 1850, feeCents: 870, balanceCents: 0 })
+    expect((await getProduct(db, kit.id, 2026))!).toMatchObject({ canBuild: 1, soldThisYear: 1 })
+
+    // Short of a part: nothing is taken.
+    const other = await newJob('Two kits', '2026-02-10')
+    await expect(sellProduct(db, other.id, { productId: kit.id, quantity: 2, priceCents: 48000, usedOn: '2026-02-10' }))
+      .rejects.toThrow('Splitter bracket A (need 4, have 2)')
+    expect((await listProducts(db, 2026))[0].canBuild).toBe(1)
+
+    // Back to stock takes the line off and puts the parts back.
+    await returnToStock(db, { jobLineId: d.lines[0].id })
+    expect((await getProduct(db, kit.id, 2026))!).toMatchObject({ canBuild: 2, soldThisYear: 0 })
   })
 })
 

@@ -15,8 +15,10 @@ import {
 import { billStockUseAction, returnToStockAction } from '@/app/actions/stock'
 import { requestPaymentAction, voidRequestAction } from '@/app/actions/stripe'
 import { UseStockForm, type StockOption } from '@/components/use-stock'
+import { SellProductForm, type ProductOption } from '@/components/sell-product'
 import { formatDate } from '@/lib/dates'
 import { centsToInput, formatMoney, formatQuantity, formatScaled, withMarkup } from '@/lib/money'
+import { KIND_LABELS } from '@/lib/job-kinds'
 import type { JobDetail } from '@/server/jobs'
 import type { JobLine, JobStatus, Payment, PaymentPurpose } from '@/db/schema'
 
@@ -26,9 +28,9 @@ const METHOD: Record<string, string> = {
   cash: 'Cash', check: 'Check', venmo: 'Venmo', paypal: 'PayPal', zelle: 'Zelle', stripe: 'Stripe', card: 'Card', other: 'Other',
 }
 
-type Adding = null | 'labor' | 'part' | 'stock' | 'fee' | 'discount' | 'payment' | 'request'
+type Adding = null | 'labor' | 'part' | 'stock' | 'product' | 'fee' | 'discount' | 'payment' | 'request'
 
-export function JobView({ detail, number, today, laborRateCents, markupPct, stripe, customerHasEmail, stock }: {
+export function JobView({ detail, number, today, laborRateCents, markupPct, stripe, customerHasEmail, stock, products }: {
   detail: JobDetail
   number: string
   today: string
@@ -37,6 +39,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   stripe: boolean
   customerHasEmail: boolean
   stock: StockOption[]
+  products: ProductOption[]
 }) {
   const { job, customer, vehicle, lines, costs, payments, requests, photos, receiptFiles, totals, vehiclesForCustomer } = detail
   const [adding, setAdding] = useState<Adding>(null)
@@ -61,7 +64,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
   // Quoted parts not bought yet: their expected cost, kept out of the books.
   const estCents = lines.reduce((a, l) => a + (l.purchaseLineId ? 0 : l.estCostCents ?? 0), 0)
   const suggestedPurpose: PaymentPurpose = totals.paidCents === 0 && (job.status === 'quote' || job.status === 'in_progress') ? 'deposit' : 'final'
-  const partNumberOf = (l: JobLine) => l.purchaseLineId ? costById.get(l.purchaseLineId)?.partNumber : l.partNumber ?? costsFor(l)[0]?.partNumber
+  const partNumberOf = (l: JobLine) => l.productId ? null : l.purchaseLineId ? costById.get(l.purchaseLineId)?.partNumber : l.partNumber ?? costsFor(l)[0]?.partNumber
   const vehicleText = vehicle ? [vehicle.year, vehicle.make, vehicle.model, vehicle.trim].filter(Boolean).join(' ') : ''
 
   return (
@@ -70,7 +73,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
         <Link href="/jobs" className="mb-1 inline-block text-sm text-fg-muted hover:text-fg">← Jobs</Link>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm text-fg-subtle tabular">#{number} · {job.kind === 'fabrication' ? 'Fabrication' : 'Service'} · opened {formatDate(job.openedOn)}</div>
+            <div className="text-sm text-fg-subtle tabular">#{number} · {KIND_LABELS[job.kind]} · opened {formatDate(job.openedOn)}</div>
             <h1 className="text-xl font-semibold tracking-tight">{job.title}</h1>
             <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-sm text-fg-muted">
               <Link href={`/customers/${customer.id}`} className="font-medium text-fg hover:underline">{customer.name}</Link>
@@ -111,6 +114,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
                 <Select name="kind" defaultValue={job.kind}>
                   <option value="service">Service</option>
                   <option value="fabrication">Fabrication</option>
+                  <option value="sale">Sale</option>
                 </Select>
               </Field>
               <VehicleChoice vehicles={vehiclesForCustomer} current={job.vehicleId} />
@@ -152,7 +156,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
                   </span>
                   <span className="block text-xs text-fg-subtle">
                     {l.type === 'labor' && l.hoursHundredths != null && `${formatScaled(l.hoursHundredths, 100)} h × ${formatMoney(l.rateCents ?? 0)}`}
-                    {l.type === 'part' && (costsFor(l).length ? costLabel(costsFor(l)) : estimateLabel(l))}
+                    {l.type === 'part' && (l.productId ? productLabel(l, costsFor(l)) : costsFor(l).length ? costLabel(costsFor(l)) : estimateLabel(l))}
                   </span>
                 </span>
                 <Money cents={l.amountCents} signed className="text-sm" />
@@ -177,12 +181,18 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
             <UseStockForm items={stock} jobId={job.id} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />
           </div>
         )}
+        {adding === 'product' && (
+          <div className="border-t border-line p-4">
+            <SellProductForm products={products} jobId={job.id} today={today} onDone={() => setAdding(null)} />
+          </div>
+        )}
         {(adding === 'fee' || adding === 'discount') && <AddCharge jobId={job.id} type={adding} onDone={() => setAdding(null)} />}
 
         <div className="flex flex-wrap gap-2 border-t border-line px-4 py-3">
           <Button size="sm" onClick={() => setAdding('labor')}><Plus size={14} />Labor</Button>
           <Button size="sm" onClick={() => setAdding('part')}><Plus size={14} />Part</Button>
           {stock.length > 0 && <Button size="sm" onClick={() => setAdding('stock')}><Plus size={14} />From stock</Button>}
+          {products.length > 0 && <Button size="sm" onClick={() => setAdding('product')}><Plus size={14} />Product</Button>}
           <Button size="sm" onClick={() => setAdding('fee')}><Plus size={14} />Fee</Button>
           <Button size="sm" onClick={() => setAdding('discount')}><Plus size={14} />Discount</Button>
         </div>
@@ -336,6 +346,12 @@ function costLabel(cs: JobDetail['costs']) {
   const vendors = [...new Set(cs.map((c) => c.purchase.vendor))].join(', ')
   const source = cs.some((c) => c.useId != null) ? `from stock, ${vendors}` : vendors
   return `${qty !== 100 ? `${formatQuantity(qty)} × ` : ''}cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} · ${source}`
+}
+
+// A product: its parts are different stock items, so only their total cost.
+function productLabel(l: JobLine, cs: JobDetail['costs']) {
+  const qty = l.quantityHundredths != null && l.quantityHundredths !== 100 ? `${formatQuantity(l.quantityHundredths)} × ` : ''
+  return `${qty}product · parts cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} from stock`
 }
 
 function estimateLabel(l: JobLine) {

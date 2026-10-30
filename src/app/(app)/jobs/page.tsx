@@ -36,7 +36,10 @@ export default async function JobsPage({ searchParams }: PageProps<'/jobs'>) {
   const years = Array.from({ length: 6 }, (_, i) => thisYear - i)
   return (
     <div>
-      <PageHeader title="Jobs" actions={<LinkButton href="/jobs/new" variant="primary"><Plus size={16} />New job</LinkButton>} />
+      <PageHeader title="Jobs" actions={<>
+        <LinkButton href="/sales/new"><Plus size={16} />Sale</LinkButton>
+        <LinkButton href="/jobs/new" variant="primary"><Plus size={16} />New job</LinkButton>
+      </>} />
       <form className="mb-4 grid gap-2 sm:grid-cols-[1fr_auto_auto_auto_auto]">
         <div className="relative">
           <Search size={16} className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-fg-subtle" />
@@ -46,9 +49,10 @@ export default async function JobsPage({ searchParams }: PageProps<'/jobs'>) {
           {STATUS_OPTIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
         </Select>
         <Select name="kind" defaultValue={kind}>
-          <option value="">Service and fab</option>
+          <option value="">All kinds</option>
           <option value="service">Service</option>
           <option value="fabrication">Fabrication</option>
+          <option value="sale">Sale</option>
         </Select>
         <Select name="year" defaultValue={yearParam}>
           {years.map((y) => <option key={y} value={y}>{y}</option>)}

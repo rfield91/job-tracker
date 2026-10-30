@@ -17,7 +17,7 @@ import type { SettingsData } from '@/lib/settings-data'
 // Money is integer cents everywhere. Hours are stored in hundredths, miles in
 // tenths. Calendar dates are 'YYYY-MM-DD' strings in the business's time zone.
 
-export type JobKind = 'service' | 'fabrication'
+export type JobKind = 'service' | 'fabrication' | 'sale'
 export type JobStatus = 'quote' | 'in_progress' | 'done' | 'paid'
 export type JobLineType = 'labor' | 'part' | 'fee' | 'discount'
 export type PaymentPurpose = 'deposit' | 'progress' | 'final' | 'refund'
@@ -151,6 +151,9 @@ export const jobLines = pgTable('job_lines', {
   estCostCents: integer('est_cost_cents'),
   partNumber: text('part_number'),
   quantityHundredths: integer('quantity_hundredths'),
+  // A product sold on this line; its parts come off the shelf as stock uses
+  // billed on the line.
+  productId: integer('product_id').references(() => products.id, { onDelete: 'set null' }),
   sortOrder: integer('sort_order').notNull().default(0),
 }, (t) => [index('job_lines_job_idx').on(t.jobId)])
 
@@ -248,6 +251,28 @@ export const jobTemplates = pgTable('job_templates', {
   createdAt: createdAt(),
 })
 
+// Something sold ready-made (a bracket kit): a price and the stock parts that
+// go into one, matched to stock by stock key (part number, or description).
+export const products = pgTable('products', {
+  id: serial('id').primaryKey(),
+  name: text('name').notNull(),
+  priceCents: integer('price_cents').notNull(),
+  notes: text('notes'),
+  active: boolean('active').notNull().default(true),
+  createdAt: createdAt(),
+})
+
+export const productParts = pgTable('product_parts', {
+  id: serial('id').primaryKey(),
+  productId: integer('product_id').notNull().references(() => products.id, { onDelete: 'cascade' }),
+  stockKey: text('stock_key').notNull(),
+  // The stock item's name when picked, for when none is left on the shelf.
+  label: text('label').notNull(),
+  // Per product, in hundredths (0.08 of a 100-pack of bolts is 8).
+  quantityHundredths: integer('quantity_hundredths').notNull(),
+  sortOrder: integer('sort_order').notNull().default(0),
+}, (t) => [index('product_parts_product_idx').on(t.productId)])
+
 export type Customer = typeof customers.$inferSelect
 export type Vehicle = typeof vehicles.$inferSelect
 export type Job = typeof jobs.$inferSelect
@@ -262,3 +287,5 @@ export type PaymentRequest = typeof paymentRequests.$inferSelect
 export type FileRow = typeof files.$inferSelect
 export type Trip = typeof trips.$inferSelect
 export type JobTemplate = typeof jobTemplates.$inferSelect
+export type Product = typeof products.$inferSelect
+export type ProductPart = typeof productParts.$inferSelect
