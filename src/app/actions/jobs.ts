@@ -4,11 +4,11 @@ import { redirect } from 'next/navigation'
 import { eq } from 'drizzle-orm'
 import type { FormState } from '@/lib/form-state'
 import { int, money, oneOf, optDate, optStr, reqDate, reqInt, reqMoney, scaled, str } from '@/lib/form'
-import { laborAmount, parseMoney } from '@/lib/money'
+import { laborAmount, lineTotal, parseMoney } from '@/lib/money'
 import { jobTemplates, type JobKind, type JobLineType, type JobStatus, type PaymentPurpose, type PaymentMethod } from '@/db/schema'
 import {
   addJobLine, addPart, billCost, createJob, deleteJob, deleteJobLine, parseVehicle, recordPartPurchase, saveAsTemplate,
-  updateJob, updateJobLine,
+  updateJob, updateJobLine, updatePart,
 } from '@/server/jobs'
 import { addPayment, assignPayment, deletePayment, updatePayment } from '@/server/payments'
 import { deleteFile, saveUploads } from '@/server/files'
@@ -105,22 +105,29 @@ export async function addLineAction(_: FormState, fd: FormData) {
   })
 }
 
+// The part form's fields, shared by adding and editing. Cost is entered for
+// one; the line keeps the total.
+function partFields(fd: FormData) {
+  const description = str(fd, 'description')
+  if (!description) throw new Error('Describe the part')
+  const each = money(fd, 'costEach')
+  const billed = money(fd, 'billed')
+  if (billed == null && each == null) throw new Error('Enter a cost or a billed price')
+  const quantity = scaled(fd, 'quantity', 100) ?? 100
+  if (quantity <= 0) throw new Error('Quantity must be more than 0')
+  return {
+    description,
+    partNumber: optStr(fd, 'partNumber'),
+    quantityHundredths: quantity,
+    costCents: each == null ? null : lineTotal(each, quantity),
+    billedCents: billed ?? 0,
+  }
+}
+
 export async function addPartAction(_: FormState, fd: FormData) {
   return run(async (db) => {
-    const jobId = reqInt(fd, 'jobId')
-    const description = str(fd, 'description')
-    if (!description) throw new Error('Describe the part')
-    const cost = money(fd, 'cost')
-    const billed = money(fd, 'billed')
-    if (billed == null && cost == null) throw new Error('Enter a cost or a billed price')
-    const quantity = scaled(fd, 'quantity', 100) ?? 100
-    if (quantity <= 0) throw new Error('Quantity must be more than 0')
-    const { purchaseId } = await addPart(db, jobId, {
-      description,
-      partNumber: optStr(fd, 'partNumber'),
-      quantityHundredths: quantity,
-      costCents: cost,
-      billedCents: billed ?? 0,
+    const { purchaseId } = await addPart(db, reqInt(fd, 'jobId'), {
+      ...partFields(fd),
       vendor: optStr(fd, 'vendor'),
       purchasedOn: reqDate(fd, 'purchasedOn'),
       method: optStr(fd, 'method'),
@@ -153,6 +160,12 @@ export async function updateLineAction(_: FormState, fd: FormData) {
       amountCents: reqMoney(fd, 'amount', 'an amount'),
       ...(fd.has('estCost') ? { estCostCents: money(fd, 'estCost') } : {}),
     })
+  })
+}
+
+export async function updatePartAction(_: FormState, fd: FormData) {
+  return run(async (db) => {
+    await updatePart(db, reqInt(fd, 'id'), partFields(fd))
   })
 }
 

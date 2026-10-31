@@ -54,6 +54,11 @@ export function laborAmount(hoursHundredths: number, rateCents: number) {
   return Math.round((hoursHundredths * rateCents) / 100)
 }
 
+// Cost of a whole line from the cost of one; quantities are in hundredths.
+export function lineTotal(eachCents: number, quantityHundredths: number) {
+  return Math.round((eachCents * quantityHundredths) / 100)
+}
+
 export function withMarkup(costCents: number, markupPct: number) {
   return Math.round(costCents * (1 + markupPct / 100))
 }

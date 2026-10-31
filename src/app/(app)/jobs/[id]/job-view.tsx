@@ -9,7 +9,7 @@ import { PaymentFields } from '@/components/payment-fields'
 import { Badge, Button, Card, CardHeader, cx, Field, Input, LinkButton, Money, MoneyInput, Notice, Select, Textarea } from '@/components/ui'
 import {
   addLineAction, addPartAction, addPaymentAction, billCostAction, deleteFileAction, deleteJobAction, deleteLineAction,
-  deletePaymentAction, recordPartPurchaseAction, saveTemplateAction, setStatusAction, updateJobAction, updateLineAction, updatePaymentAction,
+  deletePaymentAction, recordPartPurchaseAction, saveTemplateAction, setStatusAction, updateJobAction, updateLineAction, updatePartAction, updatePaymentAction,
   uploadJobPhotosAction,
 } from '@/app/actions/jobs'
 import { billStockUseAction, returnToStockAction } from '@/app/actions/stock'
@@ -17,7 +17,7 @@ import { requestPaymentAction, voidRequestAction } from '@/app/actions/stripe'
 import { UseStockForm, type StockOption } from '@/components/use-stock'
 import { SellProductForm, type ProductOption } from '@/components/sell-product'
 import { formatDate } from '@/lib/dates'
-import { centsToInput, formatMoney, formatQuantity, formatScaled, withMarkup } from '@/lib/money'
+import { centsToInput, formatMoney, formatQuantity, formatScaled, lineTotal, parseMoney, parseScaled, withMarkup } from '@/lib/money'
 import { KIND_LABELS } from '@/lib/job-kinds'
 import type { JobDetail } from '@/server/jobs'
 import type { JobLine, JobStatus, Payment, PaymentPurpose } from '@/db/schema'
@@ -145,7 +145,9 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
           <div key={g.title} className="border-t border-line">
             <div className="px-4 pt-2 text-xs font-medium tracking-wide text-fg-subtle uppercase">{g.title}</div>
             {g.rows.map((l) => editingLine === l.id ? (
-              <LineEditor key={l.id} line={l} today={today} fromStock={costsFor(l).some((c) => c.useId != null)} onDone={() => setEditingLine(null)} />
+              <LineEditor key={l.id} line={l} today={today} quote={isQuote} markupPct={markupPct}
+                cost={l.purchaseLineId ? costById.get(l.purchaseLineId) ?? null : null}
+                fromStock={costsFor(l).some((c) => c.useId != null)} onDone={() => setEditingLine(null)} />
             ) : (
               <button key={l.id} type="button" onClick={() => setEditingLine(l.id)}
                 className="flex w-full items-baseline gap-3 px-4 py-2 text-left hover:bg-hover">
@@ -175,7 +177,11 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
         )}
 
         {adding === 'labor' && <AddLabor jobId={job.id} rate={laborRateCents} onDone={() => setAdding(null)} />}
-        {adding === 'part' && <AddPart jobId={job.id} quote={isQuote} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />}
+        {adding === 'part' && (
+          <div className="border-t border-line p-4">
+            <PartForm jobId={job.id} quote={isQuote} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />
+          </div>
+        )}
         {adding === 'stock' && (
           <div className="border-t border-line p-4">
             <UseStockForm items={stock} jobId={job.id} today={today} markupPct={markupPct} onDone={() => setAdding(null)} />
@@ -413,53 +419,109 @@ function AddLabor({ jobId, rate, onDone }: { jobId: number; rate: number; onDone
   )
 }
 
-function AddPart({ jobId, quote, today, markupPct, onDone }: { jobId: number; quote: boolean; today: string; markupPct: number; onDone: () => void }) {
-  const [billed, setBilled] = useState('')
-  const [touched, setTouched] = useState(false)
+// A part on the job, added or edited with the same fields. Cost is for one;
+// the billed price follows cost × qty with markup until it's typed over.
+// Editing a bought part changes its purchase line; a part from stock (or a
+// product) takes its quantity and cost from stock, so those stay fixed.
+type PartEdit = { line: JobLine; cost: JobDetail['costs'][number] | null; fromStock: boolean }
+
+function PartForm({ jobId, edit, quote, today, markupPct, onDone, footer }: {
+  jobId: number
+  edit?: PartEdit
+  quote: boolean
+  today: string
+  markupPct: number
+  onDone: () => void
+  footer?: React.ReactNode
+}) {
+  const line = edit?.line
+  const fixed = !!edit && (edit.fromStock || line?.productId != null)
+  const unbought = !!edit && !line?.purchaseLineId && !fixed
+  const initialQty = line?.quantityHundredths ?? edit?.cost?.quantityHundredths ?? 100
+  const initialTotal = edit ? (edit.cost ? edit.cost.amountCents : line?.estCostCents ?? null) : null
+  const [qty, setQty] = useState(formatQuantity(initialQty))
+  const [each, setEach] = useState(initialTotal == null ? '' : centsToInput(Math.round((initialTotal * 100) / initialQty)))
+  const [billed, setBilled] = useState(line ? centsToInput(line.amountCents) : '')
+  // An existing price that matches the markup keeps following it.
+  const [touched, setTouched] = useState(!!line && (initialTotal == null || line.amountCents !== withMarkup(initialTotal, markupPct)))
   const [more, setMore] = useState(false)
+  const qtyH = parseScaled(qty, 100)
+  const eachC = parseMoney(each)
+  const total = qtyH != null && eachC != null ? lineTotal(eachC, qtyH) : null
+  const follow = (nextEach: string, nextQty: string) => {
+    if (touched) return
+    const e = parseMoney(nextEach)
+    const q = parseScaled(nextQty, 100)
+    setBilled(e != null && q != null ? centsToInput(withMarkup(lineTotal(e, q), markupPct)) : '')
+  }
+  const reset = () => { setQty('1'); setEach(''); setBilled(''); setTouched(false); setMore(false) }
+  const formId = line ? `line-${line.id}` : `add-part-${jobId}`
+  const estimate = quote || unbought
+  const adding = !edit
   return (
-    <div className="border-t border-line p-4">
-      <ActionForm action={addPartAction} resetOnSuccess onSuccess={() => { setBilled(''); setTouched(false) }} className="space-y-3">
-        <input type="hidden" name="jobId" value={jobId} />
-        <Field label="Part"><Input name="description" placeholder="Vibrant resonator" autoFocus required /></Field>
+    <>
+      <ActionForm id={formId} action={edit ? updatePartAction : addPartAction} resetOnSuccess={adding}
+        onSuccess={edit ? onDone : reset} className="space-y-3">
+        {line ? <input type="hidden" name="id" value={line.id} /> : <input type="hidden" name="jobId" value={jobId} />}
+        <Field label="Part"><Input name="description" defaultValue={line?.description} placeholder="Vibrant resonator" autoFocus required /></Field>
         <div className="grid grid-cols-[1fr_6rem] gap-3">
-          <Field label="Part number"><Input name="partNumber" placeholder="Optional" autoComplete="off" /></Field>
-          <Field label="Qty"><Input name="quantity" defaultValue="1" inputMode="decimal" required /></Field>
+          <Field label="Part number">
+            <Input name="partNumber" defaultValue={line ? (line.partNumber ?? edit?.cost?.partNumber ?? '') : undefined} placeholder="Optional" autoComplete="off" disabled={fixed} />
+          </Field>
+          <Field label="Qty">
+            <Input name="quantity" value={qty} onChange={(e) => { setQty(e.target.value); follow(each, e.target.value) }} inputMode="decimal" required disabled={fixed} />
+          </Field>
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <Field label={quote ? 'Expected cost' : 'Your cost'} hint={quote ? 'Not a purchase until you buy it' : 'Leave empty if the customer supplied it'}>
-            <MoneyInput name="cost" onChange={(e) => {
-              if (touched) return
-              const c = parseFloat(e.target.value.replace(/[$,]/g, ''))
-              setBilled(Number.isFinite(c) ? (withMarkup(Math.round(c * 100), markupPct) / 100).toFixed(2) : '')
-            }} />
+          <Field label={estimate ? 'Expected cost each' : 'Cost each'}
+            hint={total != null && qtyH !== 100 ? `${formatMoney(total)} for ${formatQuantity(qtyH!)}` : estimate ? 'Not a purchase until you buy it' : adding ? 'Leave empty if the customer supplied it' : undefined}>
+            <MoneyInput name="costEach" value={each} onChange={(e) => { setEach(e.target.value); follow(e.target.value, qty) }} disabled={fixed} required={!!line?.purchaseLineId} />
           </Field>
           <Field label="Bill customer" hint={`${markupPct}% markup by default`}>
             <MoneyInput name="billed" value={billed} onChange={(e) => { setBilled(e.target.value); setTouched(true) }} />
           </Field>
-          {!quote && <>
+          {adding && !quote && <>
             <Field label="Vendor"><Input name="vendor" placeholder="Summit, RockAuto…" /></Field>
             <Field label="Bought"><Input type="date" name="purchasedOn" defaultValue={today} /></Field>
           </>}
         </div>
-        {quote && <input type="hidden" name="purchasedOn" value={today} />}
-        {more && !quote ? (
+        {adding && quote && <input type="hidden" name="purchasedOn" value={today} />}
+        {more && adding && !quote ? (
           <Field label="Paid with"><Input name="method" placeholder="Card, cash…" /></Field>
         ) : null}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {quote ? <span className="text-xs text-fg-subtle">When you buy it, open the line and choose Bought it.</span> : (
-            <div className="flex items-center gap-3">
-              <FileInput name="receipt" label="Receipt" />
-              {!more && <button type="button" className="text-sm text-fg-muted hover:text-fg" onClick={() => setMore(true)}>More…</button>}
+        {fixed && <div className="text-xs text-fg-subtle">Quantity and cost come from stock. To change them, put it back in stock and add it again.</div>}
+        {edit?.cost && !fixed && (
+          <div className="text-xs text-fg-subtle">
+            Bought from {edit.cost.purchase.vendor} on {formatDate(edit.cost.purchase.purchasedOn)}.{' '}
+            <Link href={`/purchases/${edit.cost.purchaseId}`} className="underline">Open the purchase</Link> for the vendor, date or receipt.
+          </div>
+        )}
+        {adding && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            {quote ? <span className="text-xs text-fg-subtle">When you buy it, open the line and choose Bought it.</span> : (
+              <div className="flex items-center gap-3">
+                <FileInput name="receipt" label="Receipt" />
+                {!more && <button type="button" className="text-sm text-fg-muted hover:text-fg" onClick={() => setMore(true)}>More…</button>}
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={onDone}>Done</Button>
+              <SubmitButton>Add</SubmitButton>
             </div>
-          )}
+          </div>
+        )}
+      </ActionForm>
+      {/* Remove and Back to stock are forms of their own, so they sit outside. */}
+      {edit && (
+        <div className="mt-3 flex flex-wrap justify-between gap-2">
+          <div className="flex gap-2">{footer}</div>
           <div className="flex gap-2">
-            <Button onClick={onDone}>Done</Button>
-            <SubmitButton>Add</SubmitButton>
+            <Button onClick={onDone}>Cancel</Button>
+            <SubmitButton form={formId}>Save</SubmitButton>
           </div>
         </div>
-      </ActionForm>
-    </div>
+      )}
+    </>
   )
 }
 
@@ -484,10 +546,28 @@ function AddCharge({ jobId, type, onDone }: { jobId: number; type: 'fee' | 'disc
   )
 }
 
-function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: string; fromStock: boolean; onDone: () => void }) {
+function LineEditor({ line, today, quote, markupPct, cost, fromStock, onDone }: {
+  line: JobLine; today: string; quote: boolean; markupPct: number
+  cost: JobDetail['costs'][number] | null; fromStock: boolean; onDone: () => void
+}) {
   const hourly = line.type === 'labor' && line.hoursHundredths != null
   const unbought = line.type === 'part' && !line.purchaseLineId && !fromStock
   const [buying, setBuying] = useState(false)
+  const buttons = (
+    <>
+      <ActionButton action={deleteLineAction} fields={{ id: line.id }} variant="danger" size="md"
+        confirm={line.purchaseLineId || fromStock ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
+        <Trash2 size={15} />Remove
+      </ActionButton>
+      {fromStock && (
+        <ActionButton action={returnToStockAction} fields={{ jobLineId: line.id }} size="md"
+          confirm="Take this off the job and the invoice, and put it back in stock?">
+          Back to stock
+        </ActionButton>
+      )}
+      {unbought && <Button size="md" onClick={() => setBuying(true)}>Bought it</Button>}
+    </>
+  )
   if (buying) {
     return (
       <div className="bg-raised px-4 py-3">
@@ -495,7 +575,9 @@ function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: 
           <input type="hidden" name="id" value={line.id} />
           <div className="text-sm font-medium">Bought: {line.description}</div>
           <div className="grid grid-cols-2 gap-3">
-            <Field label="Paid"><MoneyInput name="cost" defaultValue={centsToInput(line.estCostCents)} autoFocus required /></Field>
+            <Field label="Paid" hint={line.quantityHundredths != null && line.quantityHundredths !== 100 ? `For all ${formatQuantity(line.quantityHundredths)}` : undefined}>
+              <MoneyInput name="cost" defaultValue={centsToInput(line.estCostCents)} autoFocus required />
+            </Field>
             <Field label="Bought"><Input type="date" name="purchasedOn" defaultValue={today} required /></Field>
             <Field label="Vendor"><Input name="vendor" placeholder="Summit, RockAuto…" /></Field>
             <Field label="Paid with"><Input name="method" placeholder="Card, cash…" /></Field>
@@ -511,6 +593,13 @@ function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: 
       </div>
     )
   }
+  if (line.type === 'part') {
+    return (
+      <div className="bg-raised px-4 py-3">
+        <PartForm jobId={line.jobId} edit={{ line, cost, fromStock }} quote={quote} today={today} markupPct={markupPct} onDone={onDone} footer={buttons} />
+      </div>
+    )
+  }
   return (
     <div className="bg-raised px-4 py-3">
       <ActionForm id={`line-${line.id}`} action={updateLineAction} onSuccess={onDone} className="space-y-3">
@@ -523,28 +612,13 @@ function LineEditor({ line, today, fromStock, onDone }: { line: JobLine; today: 
             <Field label="Rate"><MoneyInput name="rate" defaultValue={centsToInput(line.rateCents)} /></Field>
           </div>
         ) : (
-          <div className={cx(unbought && 'grid grid-cols-2 gap-3')}>
-            <Field label={line.type === 'part' ? 'Billed' : 'Amount'}>
-              <MoneyInput name="amount" defaultValue={centsToInput(Math.abs(line.amountCents))} />
-            </Field>
-            {unbought && <Field label="Expected cost"><MoneyInput name="estCost" defaultValue={centsToInput(line.estCostCents)} /></Field>}
-          </div>
+          <Field label="Amount">
+            <MoneyInput name="amount" defaultValue={centsToInput(Math.abs(line.amountCents))} />
+          </Field>
         )}
       </ActionForm>
         <div className="mt-3 flex flex-wrap justify-between gap-2">
-          <div className="flex gap-2">
-            <ActionButton action={deleteLineAction} fields={{ id: line.id }} variant="danger" size="md"
-              confirm={line.purchaseLineId || fromStock ? 'Remove this from the invoice? The cost stays on the job.' : 'Remove this line?'}>
-              <Trash2 size={15} />Remove
-            </ActionButton>
-            {fromStock && (
-              <ActionButton action={returnToStockAction} fields={{ jobLineId: line.id }} size="md"
-                confirm="Take this off the job and the invoice, and put it back in stock?">
-                Back to stock
-              </ActionButton>
-            )}
-            {unbought && <Button size="md" onClick={() => setBuying(true)}>Bought it</Button>}
-          </div>
+          <div className="flex gap-2">{buttons}</div>
           <div className="flex gap-2">
             <Button onClick={onDone}>Cancel</Button>
             <SubmitButton form={`line-${line.id}`}>Save</SubmitButton>

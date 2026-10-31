@@ -3,7 +3,7 @@ import type Stripe from 'stripe'
 import { eq } from 'drizzle-orm'
 import { openPglite, type Db } from '@/db'
 import { assets, categories, paymentRequests, payments } from '@/db/schema'
-import { addJobLine, addPart, createJob, getJobDetail, jobTotals, listJobs, recordPartPurchase, updateJob } from './jobs'
+import { addJobLine, addPart, createJob, getJobDetail, jobTotals, listJobs, recordPartPurchase, updateJob, updatePart } from './jobs'
 import { createAsset } from './assets'
 import { addPayment, assignPayment, unmatchedPayments } from './payments'
 import { createPurchase, deletePurchase, getPurchase, listPurchases, updatePurchase } from './purchases'
@@ -89,6 +89,25 @@ describe('quotes and completion dates', () => {
     expect(d.lines[0]).toMatchObject({ estCostCents: null, purchaseLineId: d.costs[0].id })
     expect(d.costs[0]).toMatchObject({ partNumber: 'VB-1', quantityHundredths: 200, purchaseId: bought.purchaseId })
     await expect(recordPartPurchase(db, line.id, { costCents: 1, purchasedOn: '2026-10-14' })).rejects.toThrow()
+  })
+
+  it('edits a part’s number, quantity and cost, quoted or bought', async () => {
+    const job = await createJob(db, {
+      customer: { name: 'Sam' }, title: 'Brackets', kind: 'fabrication', status: 'quote', openedOn: '2026-10-10',
+    })
+    const { line } = await addPart(db, job.id, { description: 'Bolt', quantityHundredths: 100, costCents: 250, billedCents: 300, purchasedOn: '2026-10-10' })
+    await updatePart(db, line.id, { description: 'Bolt M8', partNumber: 'M8-40', quantityHundredths: 800, costCents: 2000, billedCents: 2400 })
+    expect((await getJobDetail(db, job.id))!.lines[0]).toMatchObject({
+      description: 'Bolt M8', partNumber: 'M8-40', quantityHundredths: 800, estCostCents: 2000, amountCents: 2400,
+    })
+
+    await updateJob(db, job.id, { status: 'in_progress' })
+    await recordPartPurchase(db, line.id, { costCents: 2000, purchasedOn: '2026-10-14' })
+    await updatePart(db, line.id, { description: 'Bolt M8', partNumber: 'M8-45', quantityHundredths: 1000, costCents: 2500, billedCents: 3000 })
+    const d = (await getJobDetail(db, job.id))!
+    expect(d.costs[0]).toMatchObject({ partNumber: 'M8-45', quantityHundredths: 1000, amountCents: 2500 })
+    expect(d.totals.costCents).toBe(2500)
+    expect(d.lines[0].amountCents).toBe(3000)
   })
 
   it('dates catch-up jobs by their last payment, not the day they were entered', async () => {

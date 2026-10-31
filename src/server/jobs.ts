@@ -2,7 +2,7 @@ import { and, asc, desc, eq, ilike, inArray, max, or, sql, type SQL } from 'driz
 import type { Db } from '@/db'
 import {
   customers, files, jobLines, jobs, jobTemplates, paymentRequests, payments, purchaseLines,
-  purchases, vehicles,
+  purchases, stockUses, vehicles,
   type Job, type JobKind, type JobLineType, type JobStatus, type Vehicle,
 } from '@/db/schema'
 import { monthKey, todayIn, yearOf } from '@/lib/dates'
@@ -382,6 +382,45 @@ export async function addPart(db: Db, jobId: number, input: {
       purchaseLineId,
     })
     return { line, purchaseId }
+  })
+}
+
+// Edits a part line the way it was added. A bought part keeps its number,
+// quantity and cost on the purchase line; a quoted one keeps them on the line.
+// Parts taken from stock (or a product) get their quantity and cost from the
+// stock uses, so only the description and price change here.
+export async function updatePart(db: Db, jobLineId: number, input: {
+  description: string
+  partNumber?: string | null
+  quantityHundredths: number
+  costCents: number | null
+  billedCents: number
+}) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db
+    const [jl] = await t.select().from(jobLines).where(eq(jobLines.id, jobLineId))
+    if (!jl || jl.type !== 'part') throw new Error('That line isn’t a part')
+    const [use] = await t.select({ id: stockUses.id }).from(stockUses).where(eq(stockUses.jobLineId, jl.id)).limit(1)
+    const base = { description: input.description.trim(), amountCents: input.billedCents }
+    if (jl.productId || use) {
+      await t.update(jobLines).set(base).where(eq(jobLines.id, jl.id))
+    } else if (jl.purchaseLineId) {
+      if (input.costCents == null) throw new Error('Enter what you paid')
+      await t.update(purchaseLines).set({
+        partNumber: input.partNumber?.trim() || null,
+        quantityHundredths: input.quantityHundredths,
+        amountCents: input.costCents,
+      }).where(eq(purchaseLines.id, jl.purchaseLineId))
+      await t.update(jobLines).set(base).where(eq(jobLines.id, jl.id))
+    } else {
+      await t.update(jobLines).set({
+        ...base,
+        partNumber: input.partNumber?.trim() || null,
+        quantityHundredths: input.quantityHundredths,
+        estCostCents: input.costCents,
+      }).where(eq(jobLines.id, jl.id))
+    }
+    await touch(t, jl.jobId)
   })
 }
 
