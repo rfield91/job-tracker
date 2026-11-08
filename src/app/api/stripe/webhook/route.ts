@@ -4,13 +4,15 @@ import { handleStripeEvent, stripeClient } from '@/server/stripe'
 
 // Public endpoint: trusted only through Stripe's signature.
 export async function POST(request: Request) {
-  const secret = process.env.STRIPE_WEBHOOK_SECRET
+  // A pasted secret can pick up whitespace, which fails every signature.
+  const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim()
   if (!secret || !process.env.STRIPE_SECRET_KEY) return new Response('Stripe isn’t configured', { status: 503 })
   const body = await request.text()
   let event: Stripe.Event
   try {
     event = await Stripe.webhooks.constructEventAsync(body, request.headers.get('stripe-signature') ?? '', secret)
-  } catch {
+  } catch (err) {
+    console.error('stripe webhook signature', err instanceof Error ? err.message : err)
     return new Response('Bad signature', { status: 400 })
   }
   try {

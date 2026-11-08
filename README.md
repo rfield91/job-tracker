@@ -67,7 +67,7 @@ A production build refuses to serve pages until sign-in is configured.
 Requests from a job page become Stripe invoices (card or bank transfer).
 Paid ones are recorded on the job automatically with the gross amount and
 Stripe's fee. Payments from your website land in “Stripe payments to
-match” on the home screen. Try it in Stripe test mode first, using a test
+match” on the home screen, where each can go on a job or become a sale. Try it in Stripe test mode first, using a test
 key and the Stripe CLI (`stripe listen --forward-to localhost:3000/api/stripe/webhook`).
 
 ## Backups

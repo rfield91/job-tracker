@@ -27,6 +27,7 @@ export async function customerOptions(db: Db) {
       id: r.customer.id,
       name: r.customer.name,
       phone: r.customer.phone,
+      email: r.customer.email,
       vehicles: r.vehicles.map((v) => ({ id: v.id, year: v.year, make: v.make, model: v.model, trim: v.trim })),
     }))
 }

@@ -75,6 +75,11 @@ export async function unmatchedPayments(db: Db) {
   return db.select().from(payments).where(isNull(payments.jobId)).orderBy(desc(payments.receivedOn))
 }
 
+export async function getPayment(db: Db, id: number) {
+  const [row] = await db.select().from(payments).where(eq(payments.id, id))
+  return row ?? null
+}
+
 export async function assignPayment(db: Db, id: number, jobId: number, purpose: PaymentPurpose) {
   const [row] = await db.update(payments).set({ jobId, purpose })
     .where(and(eq(payments.id, id), isNull(payments.jobId))).returning()

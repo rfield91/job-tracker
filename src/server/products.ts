@@ -1,9 +1,9 @@
 import { and, asc, eq, gte, inArray, isNotNull, lte, sql } from 'drizzle-orm'
 import type { Db } from '@/db'
-import { jobLines, jobs, productParts, products, stockUses, type PaymentMethod, type Product, type ProductPart } from '@/db/schema'
+import { jobLines, jobs, payments, productParts, products, stockUses, type PaymentMethod, type Product, type ProductPart } from '@/db/schema'
 import { formatQuantity } from '@/lib/money'
 import { addJobLine, createJob, refreshJobStatus, type CustomerInput } from './jobs'
-import { addPayment } from './payments'
+import { addPayment, assignPayment } from './payments'
 import { createPurchase } from './purchases'
 import { listStock, takeFifo, type StockGroup } from './stock'
 
@@ -143,48 +143,83 @@ export async function sellProduct(db: Db, jobId: number, input: {
   })
 }
 
-export type QuickSaleInput = {
+type SaleInput = {
   soldOn: string
   customerId?: number | null
   customer?: CustomerInput | null
-  productId: number
+  // A product, or for anything else, what was sold.
+  productId?: number | null
+  description?: string | null
   quantity: number
   priceCents: number
+  // Charged to the buyer, as its own line.
+  shippingBilledCents?: number | null
   // The label, as a purchase on the sale.
   shipping?: { carrier: string; costCents: number; method?: string | null } | null
-  payment?: { amountCents: number; method: PaymentMethod; feeCents?: number; note?: string | null } | null
   notes?: string | null
 }
 
-// A product sold on its own: a done job of kind sale with the product line,
-// the shipping label as its cost, and the payment, all dated the sale day.
+// A done job of kind sale with its line and the shipping, dated the sale day.
+async function createSale(t: Db, input: SaleInput) {
+  const [p] = input.productId ? await t.select().from(products).where(eq(products.id, input.productId)) : []
+  const name = p?.name ?? input.description?.trim()
+  if (!name) throw new Error('Pick a product')
+  const job = await createJob(t, {
+    customerId: input.customerId,
+    customer: input.customer,
+    title: input.quantity > 1 ? `${input.quantity} × ${name}` : name,
+    kind: 'sale',
+    status: 'done',
+    openedOn: input.soldOn,
+    notes: input.notes,
+  })
+  await t.update(jobs).set({ completedOn: input.soldOn }).where(eq(jobs.id, job.id))
+  if (p) {
+    await sellProduct(t, job.id, { productId: p.id, quantity: input.quantity, priceCents: input.priceCents, usedOn: input.soldOn })
+  } else {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) throw new Error('Sell at least one')
+    await addJobLine(t, job.id, { type: 'part', description: name, amountCents: input.priceCents, quantityHundredths: input.quantity * 100 })
+  }
+  if (input.shippingBilledCents && input.shippingBilledCents > 0) {
+    await addJobLine(t, job.id, { type: 'fee', description: 'Shipping', amountCents: input.shippingBilledCents })
+  }
+  if (input.shipping && input.shipping.costCents > 0) {
+    await createPurchase(t, {
+      purchasedOn: input.soldOn,
+      vendor: input.shipping.carrier.trim() || 'Shipping',
+      method: input.shipping.method || null,
+      lines: [{ description: 'Shipping label', amountCents: input.shipping.costCents, target: { kind: 'job', jobId: job.id } }],
+    })
+  }
+  return job
+}
+
+export type QuickSaleInput = Omit<SaleInput, 'productId'> & {
+  productId: number
+  payment?: { amountCents: number; method: PaymentMethod; feeCents?: number; note?: string | null } | null
+}
+
+// A product sold on its own, with its payment.
 export async function quickSale(db: Db, input: QuickSaleInput) {
   return db.transaction(async (tx) => {
     const t = tx as unknown as Db
-    const [p] = await t.select().from(products).where(eq(products.id, input.productId))
-    if (!p) throw new Error('Pick a product')
-    const job = await createJob(t, {
-      customerId: input.customerId,
-      customer: input.customer,
-      title: input.quantity > 1 ? `${input.quantity} × ${p.name}` : p.name,
-      kind: 'sale',
-      status: 'done',
-      openedOn: input.soldOn,
-      notes: input.notes,
-    })
-    await t.update(jobs).set({ completedOn: input.soldOn }).where(eq(jobs.id, job.id))
-    await sellProduct(t, job.id, { productId: p.id, quantity: input.quantity, priceCents: input.priceCents, usedOn: input.soldOn })
-    if (input.shipping && input.shipping.costCents > 0) {
-      await createPurchase(t, {
-        purchasedOn: input.soldOn,
-        vendor: input.shipping.carrier.trim() || 'Shipping',
-        method: input.shipping.method || null,
-        lines: [{ description: 'Shipping label', amountCents: input.shipping.costCents, target: { kind: 'job', jobId: job.id } }],
-      })
-    }
+    const job = await createSale(t, input)
     if (input.payment && input.payment.amountCents > 0) {
       await addPayment(t, { jobId: job.id, receivedOn: input.soldOn, purpose: 'final', ...input.payment })
     }
+    return job
+  })
+}
+
+// A payment that arrived without a job becomes the sale it paid for.
+export async function saleFromPayment(db: Db, paymentId: number, input: SaleInput) {
+  return db.transaction(async (tx) => {
+    const t = tx as unknown as Db
+    const [payment] = await t.select().from(payments).where(eq(payments.id, paymentId))
+    if (!payment) throw new Error('Payment not found')
+    if (payment.amountCents <= 0) throw new Error('A refund can’t become a sale')
+    const job = await createSale(t, input)
+    await assignPayment(t, paymentId, job.id, 'final')
     return job
   })
 }

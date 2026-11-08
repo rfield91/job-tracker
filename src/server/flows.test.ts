@@ -11,7 +11,7 @@ import { monthLog, monthlyReport, taxWorksheet } from './reports'
 import { saveSettings } from './settings'
 import { billStockUse, listShopUses, listStock, returnToStock, takeFromStock, useForShop } from './stock'
 import { addTrip } from './trips'
-import { getProduct, listProducts, quickSale, saveProduct, sellProduct } from './products'
+import { getProduct, listProducts, quickSale, saleFromPayment, saveProduct, sellProduct } from './products'
 import { commitImport } from './import'
 import { handleStripeEvent, invoiceItems, type StripeApi } from './stripe'
 
@@ -301,6 +301,41 @@ describe('products', () => {
       ],
     })
   }
+
+  it('turns a payment into a sale with shipping as its own line', async () => {
+    const kit = await bracketKit()
+    const [p] = await db.insert(payments).values({
+      receivedOn: '2026-11-04', amountCents: 25850, purpose: 'final', method: 'stripe', feeCents: 780, stripeChargeId: 'ch_sale',
+    }).returning()
+    const job = await saleFromPayment(db, p.id, {
+      soldOn: '2026-11-04', customer: { name: 'Justin' }, productId: kit.id, quantity: 1, priceCents: 24000,
+      shippingBilledCents: 1850, shipping: { carrier: 'USPS', costCents: 1200 },
+    })
+    const d = (await getJobDetail(db, job.id))!
+    expect(d.job).toMatchObject({ kind: 'sale', status: 'paid', completedOn: '2026-11-04', title: kit.name })
+    expect(d.lines.map((l) => [l.type, l.description, l.amountCents])).toEqual([['part', kit.name, 24000], ['fee', 'Shipping', 1850]])
+    expect(d.totals).toMatchObject({ billedCents: 25850, paidCents: 25850, balanceCents: 0, costCents: 8560 + 1200, feeCents: 780, profitCents: 25850 - 8560 - 1200 - 780 })
+    expect(await unmatchedPayments(db)).toHaveLength(0)
+    await expect(saleFromPayment(db, p.id, { soldOn: '2026-11-04', customer: { name: 'Justin' }, description: 'Again', quantity: 1, priceCents: 100 }))
+      .rejects.toThrow('already on a job')
+  })
+
+  it('sells something that isn’t a product, and leaves the payment alone when a sale can’t save', async () => {
+    const kit = await bracketKit()
+    const [p] = await db.insert(payments).values({ receivedOn: '2026-11-04', amountCents: 5000, purpose: 'final', method: 'stripe', stripeChargeId: 'ch_a' }).returning()
+    const before = (await listJobs(db, {})).length
+    await expect(saleFromPayment(db, p.id, { soldOn: '2026-11-04', customer: { name: 'Pat' }, productId: kit.id, quantity: 9, priceCents: 5000 }))
+      .rejects.toThrow('Not enough in stock')
+    expect(await unmatchedPayments(db)).toHaveLength(1)
+    expect(await listJobs(db, {})).toHaveLength(before)
+
+    const job = await saleFromPayment(db, p.id, { soldOn: '2026-11-04', customer: { name: 'Pat' }, description: 'Custom plate', quantity: 2, priceCents: 5000 })
+    expect((await getJobDetail(db, job.id))!.job).toMatchObject({ title: '2 × Custom plate', status: 'paid' })
+
+    const [refund] = await db.insert(payments).values({ receivedOn: '2026-11-05', amountCents: -100, purpose: 'refund', method: 'stripe', stripeRefundId: 're_a' }).returning()
+    await expect(saleFromPayment(db, refund.id, { soldOn: '2026-11-05', customer: { name: 'Pat' }, description: 'No', quantity: 1, priceCents: 100 }))
+      .rejects.toThrow('refund')
+  })
 
   it('knows how many it can build and what the parts cost', async () => {
     const kit = await bracketKit()

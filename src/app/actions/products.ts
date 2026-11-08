@@ -6,7 +6,7 @@ import { int, money, oneOf, optStr, reqDate, reqInt, reqMoney, str } from '@/lib
 import { parseScaled } from '@/lib/money'
 import type { PaymentMethod } from '@/db/schema'
 import { jobNumber } from '@/server/jobs'
-import { deleteProduct, quickSale, saveProduct, sellProduct } from '@/server/products'
+import { deleteProduct, quickSale, saleFromPayment, saveProduct, sellProduct } from '@/server/products'
 import { run } from './run'
 
 const METHODS = ['cash', 'check', 'venmo', 'paypal', 'zelle', 'card', 'other'] as const satisfies readonly PaymentMethod[]
@@ -55,6 +55,30 @@ export async function sellProductAction(_: FormState, fd: FormData): Promise<For
       usedOn: reqDate(fd, 'usedOn'),
     })
   })
+}
+
+// Opens the new sale, where another product can go on if the payment covered more.
+export async function saleFromPaymentAction(_: FormState, fd: FormData): Promise<FormState> {
+  let jobId = 0
+  const result = await run(async (db) => {
+    const customerId = int(fd, 'customerId')
+    const shipping = money(fd, 'shipping')
+    const job = await saleFromPayment(db, reqInt(fd, 'paymentId', 'the payment'), {
+      soldOn: reqDate(fd, 'soldOn', 'the sale date'),
+      customerId,
+      customer: customerId ? null : { name: str(fd, 'customerName'), email: optStr(fd, 'customerEmail') },
+      productId: int(fd, 'productId'),
+      description: optStr(fd, 'description'),
+      quantity: reqInt(fd, 'quantity', 'how many'),
+      priceCents: reqMoney(fd, 'price', 'a price'),
+      shippingBilledCents: money(fd, 'shippingBilled'),
+      shipping: shipping ? { carrier: str(fd, 'carrier'), costCents: shipping } : null,
+      notes: optStr(fd, 'notes'),
+    })
+    jobId = job.id
+  })
+  if (result?.error) return result
+  redirect(`/jobs/${jobId}`)
 }
 
 // Stays on the form so the next sale can go straight in; returns the new

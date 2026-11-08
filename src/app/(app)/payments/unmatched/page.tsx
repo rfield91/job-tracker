@@ -1,5 +1,5 @@
 import { ActionForm, SubmitButton } from '@/components/forms'
-import { Card, Empty, Money, PageHeader, Select } from '@/components/ui'
+import { Card, Empty, LinkButton, Money, PageHeader, Select } from '@/components/ui'
 import { assignPaymentAction } from '@/app/actions/jobs'
 import { formatDate } from '@/lib/dates'
 import { formatMoney } from '@/lib/money'
@@ -16,7 +16,7 @@ export default async function UnmatchedPage() {
   return (
     <div className="mx-auto max-w-2xl">
       <PageHeader title="Stripe payments to match" back={{ href: '/', label: 'Home' }}
-        subtitle="Payments from your website, or Stripe invoices not sent from a job. Assign each one to its job." />
+        subtitle="Payments from your website, or Stripe invoices not sent from a job. Assign each one to its job, or make it a sale." />
       <Card>
         {rows.length === 0 ? <Empty>All caught up.</Empty> : (
           <div className="divide-y divide-line">
@@ -45,6 +45,9 @@ export default async function UnmatchedPage() {
                   </Select>
                   <SubmitButton>Assign</SubmitButton>
                 </ActionForm>
+                {p.amountCents > 0 && (
+                  <LinkButton href={`/payments/${p.id}/sale`} size="sm">Make it a sale</LinkButton>
+                )}
               </div>
             ))}
           </div>
