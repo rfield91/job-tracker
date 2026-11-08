@@ -2,7 +2,7 @@
 
 import { useState } from 'react'
 import { ActionForm, SubmitButton } from '@/components/forms'
-import { BuyerPicker, ShippingLabelFields, type BuyerOption } from '@/components/sale-fields'
+import { BuyerPicker, ShippingFields, type BuyerOption } from '@/components/sale-fields'
 import { Card, Field, Input, LinkButton, MoneyInput, Notice, Select, Textarea } from '@/components/ui'
 import type { ProductOption } from '@/components/sell-product'
 import { saleFromPaymentAction } from '@/app/actions/products'
@@ -50,28 +50,27 @@ export function PaymentSaleForm({ paymentId, amountCents, receivedOn, products, 
           <Field label="Sold on"><Input type="date" name="soldOn" defaultValue={receivedOn} required /></Field>
         </div>
         {choice === OTHER && <Field label="What was sold"><Input name="description" required autoFocus /></Field>}
-        <div className="grid grid-cols-[5rem_1fr_1fr] gap-3">
+        <div className="grid grid-cols-[5rem_1fr] gap-3">
           <Field label="How many">
             <Input name="quantity" value={quantity} onChange={(e) => setQuantity(e.target.value)} inputMode="numeric" required />
           </Field>
-          <Field label="Price"><MoneyInput name="price" value={priceText} onChange={(e) => setPrice(e.target.value)} required /></Field>
-          <Field label="Shipping charged" hint="Its own line on the sale">
-            <MoneyInput name="shippingBilled" value={shippingBilled} onChange={(e) => setShippingBilled(e.target.value)} placeholder="0.00" />
+          <Field label="Price" hint="The payment, less any shipping charged">
+            <MoneyInput name="price" value={priceText} onChange={(e) => setPrice(e.target.value)} required />
           </Field>
         </div>
         {short && (
           <Notice>Stock only covers {product.canBuild}. Add the parts you bought for it to stock first, or the sale won’t save.</Notice>
         )}
+
+        <BuyerPicker customers={customers} initial={buyer} initialName={buyerName} initialEmail={buyerEmail} />
+        <ShippingFields carrier={carrier} onCarrier={setCarrier} charged={{ value: shippingBilled, onChange: setShippingBilled }} />
         {total !== amountCents && (
           <Notice>This comes to {formatMoney(total)} but the payment is {formatMoney(amountCents)}, so the sale won’t balance.</Notice>
         )}
-
-        <BuyerPicker customers={customers} initial={buyer} initialName={buyerName} initialEmail={buyerEmail} />
-        <ShippingLabelFields carrier={carrier} onCarrier={setCarrier} />
         <Field label="Notes"><Textarea name="notes" /></Field>
       </Card>
       <div className="mt-4 flex justify-end gap-2">
-        <LinkButton href="/payments/unmatched">Cancel</LinkButton>
+        <LinkButton href="/payments/unmatched" size="lg">Cancel</LinkButton>
         <SubmitButton size="lg">Make it a sale</SubmitButton>
       </div>
     </ActionForm>

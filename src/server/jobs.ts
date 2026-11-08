@@ -159,7 +159,7 @@ export async function createJob(db: Db, input: NewJobInput): Promise<Job> {
   })
 }
 
-export type JobPatch = Partial<Pick<Job, 'title' | 'kind' | 'status' | 'openedOn' | 'completedOn' | 'notes' | 'vehicleId' | 'customerId'>>
+export type JobPatch = Partial<Pick<Job, 'title' | 'kind' | 'status' | 'openedOn' | 'completedOn' | 'trackingNumber' | 'notes' | 'vehicleId' | 'customerId'>>
 
 export async function updateJob(db: Db, id: number, patch: JobPatch) {
   const next = { ...patch, updatedAt: new Date() }

@@ -42,7 +42,7 @@ export default async function EditPurchasePage({ params }: PageProps<'/purchases
     })),
   }
   return (
-    <div className="mx-auto max-w-xl">
+    <div>
       <PageHeader title="Edit purchase" back={{ href: `/purchases/${id}`, label: p.vendor }} />
       <PurchaseForm data={await purchaseFormData(db)} today={await today(db)} initial={initial} />
     </div>

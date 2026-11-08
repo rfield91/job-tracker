@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useState } from 'react'
-import { Button, Money } from '@/components/ui'
+import { Button, Money, Qty } from '@/components/ui'
 import { ShopUseForm, UseStockForm, type StockOption } from '@/components/use-stock'
 import { formatDate } from '@/lib/dates'
 import { formatMoney, formatQuantity } from '@/lib/money'
@@ -22,7 +22,7 @@ export function StockRow({ item, jobs, categories, today, markupPct }: {
       <div className="flex items-center gap-3">
         <span className="min-w-0 flex-1">
           <span className="block text-sm">
-            <span className="text-fg-muted tabular">{formatQuantity(item.quantityHundredths)} × </span>
+            <Qty hundredths={item.quantityHundredths} />
             {item.label}
             {item.partNumber && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{item.partNumber}</span>}
           </span>

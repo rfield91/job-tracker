@@ -19,7 +19,7 @@ export default async function NewSalePage({ searchParams }: PageProps<'/sales/ne
   const recent = await listJobs(db, { kind: 'sale', limit: 10 })
   const productId = typeof sp.product === 'string' ? Number(sp.product) : null
   return (
-    <div className="mx-auto max-w-xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader
         title="New sale"
         subtitle="A product sold on its own: the sale, its shipping label and the payment in one go. The form stays open for the next one."

@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { ActionForm, SubmitButton } from '@/components/forms'
-import { BuyerPicker, ShippingLabelFields, type BuyerOption } from '@/components/sale-fields'
+import { BuyerPicker, ShippingFields, type BuyerOption } from '@/components/sale-fields'
 import { Card, Field, Input, MoneyInput, Notice, Select, Textarea } from '@/components/ui'
 import type { ProductOption } from '@/components/sell-product'
 import { quickSaleAction } from '@/app/actions/products'
@@ -77,7 +77,7 @@ export function QuickSaleForm({ products, customers, today, initialProductId }: 
 
         <BuyerPicker key={`buyer-${round}`} customers={customers} />
 
-        <ShippingLabelFields carrier={carrier} onCarrier={setCarrier} costKey={`ship-${round}`} />
+        <ShippingFields carrier={carrier} onCarrier={setCarrier} costKey={`ship-${round}`} />
 
         <div>
           <label className="mb-2 flex items-center gap-2 text-sm font-medium text-fg-muted">

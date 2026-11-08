@@ -28,7 +28,7 @@ export default async function PaymentSalePage({ params }: PageProps<'/payments/[
     : payer && c.name.toLowerCase() === payer.toLowerCase())
 
   return (
-    <div className="mx-auto max-w-xl space-y-4">
+    <div className="mx-auto max-w-3xl space-y-4">
       <PageHeader title="Make it a sale" back={{ href: '/payments/unmatched', label: 'Stripe payments' }}
         subtitle="Creates the sale and puts this payment on it." />
       <Card className="flex items-baseline justify-between gap-3 p-4">

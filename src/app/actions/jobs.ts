@@ -58,6 +58,7 @@ export async function updateJobAction(_: FormState, fd: FormData) {
       kind: oneOf(fd, 'kind', KINDS, 'service'),
       openedOn: reqDate(fd, 'openedOn'),
       completedOn: optDate(fd, 'completedOn'),
+      trackingNumber: optStr(fd, 'trackingNumber'),
       notes: optStr(fd, 'notes'),
       vehicleId,
     })

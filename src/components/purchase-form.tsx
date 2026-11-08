@@ -133,30 +133,28 @@ export function PurchaseForm({ data, today, initial, presetJobId, presetStock, r
       <Card className="space-y-4 p-4">
         <FileInput name="receipt" label={editing ? 'Add receipt photo' : 'Snap the receipt'} />
 
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="Vendor" className="col-span-2 sm:col-span-1">
+        <div className="grid gap-3 sm:grid-cols-[1fr_11rem]">
+          <Field label="Vendor">
             <Input name="vendor" list="vendor-list" value={vendor} onChange={(e) => pickVendor(e.target.value)} placeholder="Summit Racing, Airgas…" required autoComplete="off" />
             <datalist id="vendor-list">{data.vendors.map((v) => <option key={v.vendor} value={v.vendor} />)}</datalist>
           </Field>
           <Field label="Date">
             <Input type="date" name="purchasedOn" defaultValue={initial?.purchasedOn ?? today} required />
           </Field>
-          {!split && (
-            <Field label="Total">
-              <MoneyInput value={total} onChange={(e) => { setTotal(e.target.value); setLines((ls) => ls.map(withBilledFor(e.target.value))) }} required />
-            </Field>
-          )}
         </div>
 
-        {lines.map((l, i) => (
+        {lines.map((l) => (
           <LineEditor
             key={l.key}
             line={l}
-            index={i}
             split={split}
             data={data}
             catById={catById}
-            totalCents={parseMoney(split ? l.amount : total)}
+            amount={split ? l.amount : total}
+            onAmount={(v) => {
+              if (split) update(l.key, { amount: v })
+              else { setTotal(v); setLines((ls) => ls.map(withBilledFor(v))) }
+            }}
             onChange={(patch) => update(l.key, patch)}
             onRemove={lines.length > 1 ? () => setLines((ls) => ls.filter((x) => x.key !== l.key)) : undefined}
           />
@@ -214,51 +212,47 @@ export function PurchaseForm({ data, today, initial, presetJobId, presetStock, r
   }
 }
 
-function QuantityFields({ line, totalCents, onChange }: {
-  line: LineState
-  totalCents: number | null
-  onChange: (patch: Partial<LineState>) => void
-}) {
-  const qty = parseQuantity(line.quantity)
-  return (
-    <div className="grid grid-cols-[1fr_6rem] gap-3">
-      <Field label="Part number">
-        <Input value={line.partNumber} onChange={(e) => onChange({ partNumber: e.target.value })} placeholder="Optional" autoComplete="off" />
-      </Field>
-      <Field label="Qty" hint={qty != null && qty !== 100 && totalCents != null ? `${formatMoney(Math.round((totalCents * 100) / qty))} each` : undefined}>
-        <Input value={line.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" required />
-      </Field>
-    </div>
-  )
+const PRODUCT_HINT: Record<NonNullable<Kind>, string> = {
+  job: 'Shows on the invoice',
+  category: 'What was it (optional)',
+  stock: '2.5in mandrel bends…',
+  asset: 'Lathe, TIG welder…',
 }
 
-function LineEditor({ line, index, split, data, catById, totalCents, onChange, onRemove }: {
+function LineEditor({ line, split, data, catById, amount, onAmount, onChange, onRemove }: {
   line: LineState
-  index: number
   split: boolean
   data: PurchaseFormData
   catById: Map<string, PurchaseFormData['categories'][number]>
-  totalCents: number | null
+  amount: string
+  onAmount: (v: string) => void
   onChange: (patch: Partial<LineState>) => void
   onRemove?: () => void
 }) {
   const openJobs = data.jobs.filter((j) => j.open)
   const recentJobs = data.jobs.filter((j) => !j.open)
   const cat = catById.get(line.categoryId)
+  const totalCents = parseMoney(amount)
+  const qty = parseQuantity(line.quantity)
   const bigForShop = line.kind === 'category' && totalCents != null && totalCents >= data.assetThresholdCents
   return (
     <div className={cx(split && 'rounded-lg border border-line p-3', 'space-y-3')}>
-      {split && (
-        <div className="flex items-end gap-2">
-          <Field label={`Line ${index + 1}`} className="flex-1">
-            <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="What was it" />
-          </Field>
-          <Field label="Amount" className="w-32">
-            <MoneyInput value={line.amount} onChange={(e) => onChange({ amount: e.target.value })} />
-          </Field>
-          {onRemove && <Button variant="ghost" onClick={onRemove} aria-label="Remove line"><Trash2 size={16} /></Button>}
-        </div>
-      )}
+      <div className={cx('grid grid-cols-2 gap-3', onRemove ? 'md:grid-cols-[11rem_1fr_5rem_9rem_2.5rem]' : 'md:grid-cols-[11rem_1fr_5rem_9rem]')}>
+        <Field label="Part number" className="col-span-2 md:col-span-1">
+          <Input value={line.partNumber} onChange={(e) => onChange({ partNumber: e.target.value })} placeholder="Optional" autoComplete="off" />
+        </Field>
+        <Field label="Product" className="col-span-2 md:col-span-1">
+          <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })}
+            placeholder={line.kind ? PRODUCT_HINT[line.kind] : 'What was it'} required={!split && (line.kind === 'stock' || line.kind === 'asset')} />
+        </Field>
+        <Field label="Qty">
+          <Input value={line.quantity} onChange={(e) => onChange({ quantity: e.target.value })} inputMode="decimal" required />
+        </Field>
+        <Field label="Amount" hint={qty != null && qty !== 100 && totalCents != null ? `${formatMoney(Math.round((totalCents * 100) / qty))} each` : undefined}>
+          <MoneyInput value={amount} onChange={(e) => onAmount(e.target.value)} required={!split} />
+        </Field>
+        {onRemove && <Button variant="ghost" onClick={onRemove} aria-label="Remove line" className="col-span-2 md:col-span-1 md:mt-6 md:px-0"><Trash2 size={16} /></Button>}
+      </div>
       <div>
         <span className="mb-1 block text-sm font-medium text-fg-muted">What was it for?</span>
         <div className="grid grid-cols-4 gap-2">
@@ -287,9 +281,6 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
               </optgroup>
             )}
           </Select>
-          {!split && (
-            <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="What was it (shows on the invoice)" />
-          )}
           {!line.id && !line.contract && (
             <div className="flex flex-wrap items-center gap-3">
               <label className="flex items-center gap-2 text-sm">
@@ -321,9 +312,6 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
           {cat?.line === '11' && (
             <Input value={line.payee} onChange={(e) => onChange({ payee: e.target.value })} placeholder="Paid to (for the 1099 list)" />
           )}
-          {!split && (
-            <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="What was it (optional)" />
-          )}
           {bigForShop && (
             <Notice>
               Over {formatMoney(data.assetThresholdCents, { whole: true })} for one item? It’s probably equipment.{' '}
@@ -334,30 +322,20 @@ function LineEditor({ line, index, split, data, catById, totalCents, onChange, o
       )}
 
       {line.kind === 'stock' && (
-        <div className="space-y-3">
-          {!split && (
-            <Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="What was it (2.5in mandrel bends…)" required />
-          )}
-          <div className="text-xs text-fg-subtle">Materials for future jobs. Put them on a job from the Stock page or the job when you use them.</div>
-        </div>
+        <div className="text-xs text-fg-subtle">Materials for future jobs. Put them on a job from the Stock page or the job when you use them.</div>
       )}
 
       {line.kind === 'asset' && (
-        <div className="grid grid-cols-[1fr_7rem] gap-3">
-          {!split
-            ? <Field label="Item"><Input value={line.description} onChange={(e) => onChange({ description: e.target.value })} placeholder="Lathe, TIG welder…" required /></Field>
-            : <div />}
-          <Field label="Business use">
+        <div className="space-y-3">
+          <Field label="Business use" className="w-28">
             <div className="relative">
               <Input value={line.businessUse} onChange={(e) => onChange({ businessUse: e.target.value.replace(/\D/g, '') })} inputMode="numeric" className="pr-7" />
               <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2 text-sm text-fg-subtle">%</span>
             </div>
           </Field>
-          <div className="col-span-2 text-xs text-fg-subtle">Goes on the equipment list for depreciation. Lower the % if you also use it for personal projects.</div>
+          <div className="text-xs text-fg-subtle">Goes on the equipment list for depreciation. Lower the % if you also use it for personal projects.</div>
         </div>
       )}
-
-      {line.kind != null && <QuantityFields line={line} totalCents={totalCents} onChange={onChange} />}
     </div>
   )
 }

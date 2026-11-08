@@ -16,7 +16,7 @@ export default async function ProductPage({ params }: PageProps<'/products/[id]'
   if (!product) notFound()
   const stock = await listStock(db)
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto max-w-3xl">
       <PageHeader title={product.name} back={{ href: '/products', label: 'Products' }} />
       <ProductForm
         stock={stock.map(({ key, label, partNumber, quantityHundredths }) => ({ key, label, partNumber, quantityHundredths }))}

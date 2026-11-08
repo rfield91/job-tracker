@@ -15,7 +15,7 @@ export default async function NewJobPage({ searchParams }: PageProps<'/jobs/new'
   const templates = await db.select().from(jobTemplates).orderBy(asc(jobTemplates.name))
   const customerId = typeof sp.customer === 'string' ? Number(sp.customer) : null
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto max-w-3xl">
       <PageHeader title="New job" back={{ href: '/jobs', label: 'Jobs' }} />
       <NewJobForm
         customers={customers}

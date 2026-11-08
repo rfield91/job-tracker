@@ -24,7 +24,7 @@ export default async function MileagePage({ searchParams }: PageProps<'/mileage'
   const miles = trips.reduce((a, t) => a + t.trip.milesTenths, 0)
   const jobs = await jobOptions(db, 40)
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="space-y-4">
       <PageHeader title="Mileage" subtitle="Business driving: parts runs, pickups, supply trips. Commuting doesn’t count." />
       <Card className="p-4">
         <ActionForm action={addTripAction} resetOnSuccess className="grid grid-cols-2 gap-3 sm:grid-cols-[8rem_6rem_1fr]">

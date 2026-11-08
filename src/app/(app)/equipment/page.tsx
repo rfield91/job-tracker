@@ -22,7 +22,7 @@ export default async function EquipmentPage() {
     byYear.set(y, [...(byYear.get(y) ?? []), r])
   }
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="space-y-4">
       <PageHeader title="Equipment" subtitle="Tools and machines kept for depreciation instead of expensed as supplies. Your tax software asks for these details on Form 4562." />
       {[...byYear.entries()].map(([year, list]) => (
         <Card key={year}>

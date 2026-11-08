@@ -14,7 +14,7 @@ export default async function UnmatchedPage() {
   const rows = await unmatchedPayments(db)
   const jobs = await jobOptions(db)
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-4xl">
       <PageHeader title="Stripe payments to match" back={{ href: '/', label: 'Home' }}
         subtitle="Payments from your website, or Stripe invoices not sent from a job. Assign each one to its job, or make it a sale." />
       <Card>
@@ -31,22 +31,30 @@ export default async function UnmatchedPage() {
                   </div>
                   <Money cents={p.amountCents} signed className="text-sm font-medium" />
                 </div>
-                <ActionForm action={assignPaymentAction} className="grid grid-cols-[1fr_8rem_auto] gap-2">
-                  <input type="hidden" name="id" value={p.id} />
-                  <Select name="jobId" required defaultValue="">
-                    <option value="">Pick a job…</option>
-                    {jobs.map((j) => <option key={j.id} value={j.id}>{j.label} — {j.sub}</option>)}
-                  </Select>
-                  <Select name="purpose" defaultValue={p.amountCents < 0 ? 'refund' : 'final'}>
-                    <option value="deposit">Deposit</option>
-                    <option value="progress">Progress</option>
-                    <option value="final">Final</option>
-                    <option value="refund">Refund</option>
-                  </Select>
-                  <SubmitButton>Assign</SubmitButton>
-                </ActionForm>
+                <div>
+                  <div className="mb-1 text-sm font-medium text-fg-muted">Assign to a job</div>
+                  <ActionForm action={assignPaymentAction} className="grid grid-cols-[1fr_8rem_auto] gap-2">
+                    <input type="hidden" name="id" value={p.id} />
+                    <Select name="jobId" required defaultValue="" aria-label="Job">
+                      <option value="">Pick a job…</option>
+                      {jobs.map((j) => <option key={j.id} value={j.id}>{j.label} — {j.sub}</option>)}
+                    </Select>
+                    <Select name="purpose" defaultValue={p.amountCents < 0 ? 'refund' : 'final'} aria-label="Payment type">
+                      <option value="deposit">Deposit</option>
+                      <option value="progress">Progress</option>
+                      <option value="final">Final</option>
+                      <option value="refund">Refund</option>
+                    </Select>
+                    <SubmitButton variant="secondary">Assign</SubmitButton>
+                  </ActionForm>
+                </div>
                 {p.amountCents > 0 && (
-                  <LinkButton href={`/payments/${p.id}/sale`} size="sm">Make it a sale</LinkButton>
+                  <>
+                    <div className="flex items-center gap-3 text-xs font-medium tracking-wide text-fg-subtle uppercase">
+                      <span className="h-px flex-1 bg-line" />or<span className="h-px flex-1 bg-line" />
+                    </div>
+                    <LinkButton href={`/payments/${p.id}/sale`} className="w-full">Make it a sale</LinkButton>
+                  </>
                 )}
               </div>
             ))}

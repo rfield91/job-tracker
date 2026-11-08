@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { X } from 'lucide-react'
-import { Input, MoneyInput } from './ui'
+import { Field, Input, MoneyInput } from './ui'
 
 export type BuyerOption = { id: number; name: string; phone: string | null }
 
@@ -51,17 +51,35 @@ export function BuyerPicker({ customers, initial = null, initialName = '', initi
   )
 }
 
-// The label is a cost on the sale. costKey clears the amount between sales.
-export function ShippingLabelFields({ carrier, onCarrier, costKey }: { carrier: string; onCarrier: (v: string) => void; costKey?: string }) {
+// Everything about shipping in one place. What the buyer paid for it (when the
+// form asks) is income; the label is a cost on the sale. costKey clears the
+// per-sale fields between sales.
+export function ShippingFields({ carrier, onCarrier, costKey, charged }: {
+  carrier: string
+  onCarrier: (v: string) => void
+  costKey?: string
+  charged?: { value: string; onChange: (v: string) => void }
+}) {
   return (
-    <div>
-      <span className="mb-1 block text-sm font-medium text-fg-muted">Shipping label</span>
-      <div className="grid grid-cols-[1fr_8rem] gap-3">
-        <Input name="carrier" value={carrier} onChange={(e) => onCarrier(e.target.value)} list="carriers" aria-label="Carrier" />
-        <MoneyInput key={costKey} name="shipping" placeholder="Cost" aria-label="Label cost" />
+    <div className="space-y-3 rounded-lg border border-line p-3">
+      <div className="text-sm font-medium">Shipping</div>
+      <div className="grid grid-cols-2 gap-3">
+        {charged && (
+          <Field label="Charged to buyer" hint="Its own line on the sale">
+            <MoneyInput name="shippingBilled" value={charged.value} onChange={(e) => charged.onChange(e.target.value)} placeholder="0.00" />
+          </Field>
+        )}
+        <Field label="Label cost" hint="What you paid, against this sale’s profit">
+          <MoneyInput key={costKey} name="shipping" placeholder="0.00" />
+        </Field>
+        <Field label="Carrier">
+          <Input name="carrier" value={carrier} onChange={(e) => onCarrier(e.target.value)} list="carriers" />
+        </Field>
+        <Field label="Tracking number" className={charged ? undefined : 'col-span-2'}>
+          <Input key={costKey} name="trackingNumber" autoComplete="off" />
+        </Field>
       </div>
       <datalist id="carriers">{CARRIERS.map((c) => <option key={c} value={c} />)}</datalist>
-      <div className="mt-1 text-xs text-fg-subtle">Entered as a purchase on the sale, so it counts against this sale’s profit.</div>
     </div>
   )
 }

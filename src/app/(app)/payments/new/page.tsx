@@ -9,7 +9,7 @@ export const metadata = { title: 'New payment' }
 export default async function NewPaymentPage() {
   const db = await authedDb()
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto max-w-3xl">
       <PageHeader title="Record a payment" back={{ href: '/', label: 'Home' }} />
       <NewPaymentForm jobs={await jobOptions(db)} today={await today(db)} />
     </div>

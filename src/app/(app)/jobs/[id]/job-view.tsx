@@ -6,7 +6,7 @@ import { ExternalLink, Phone, Plus, Printer, Trash2 } from 'lucide-react'
 import { ActionButton, ActionForm, SubmitButton } from '@/components/forms'
 import { FileInput, Thumb } from '@/components/file-input'
 import { PaymentFields } from '@/components/payment-fields'
-import { Badge, Button, Card, CardHeader, cx, Field, Input, LinkButton, Money, MoneyInput, Notice, Select, Textarea } from '@/components/ui'
+import { Badge, Button, Card, CardHeader, cx, Field, Input, LinkButton, Money, MoneyInput, Notice, Qty, Select, Textarea } from '@/components/ui'
 import {
   addLineAction, addPartAction, addPaymentAction, billCostAction, deleteFileAction, deleteJobAction, deleteLineAction,
   deletePaymentAction, recordPartPurchaseAction, saveTemplateAction, setStatusAction, updateJobAction, updateLineAction, updatePartAction, updatePaymentAction,
@@ -19,6 +19,7 @@ import { SellProductForm, type ProductOption } from '@/components/sell-product'
 import { formatDate } from '@/lib/dates'
 import { centsToInput, formatMoney, formatQuantity, formatScaled, lineTotal, parseMoney, parseScaled, withMarkup } from '@/lib/money'
 import { KIND_LABELS } from '@/lib/job-kinds'
+import { partQuantity } from '@/lib/job-lines'
 import type { JobDetail } from '@/server/jobs'
 import type { JobLine, JobStatus, Payment, PaymentPurpose } from '@/db/schema'
 
@@ -82,6 +83,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
                 <a href={`tel:${customer.phone}`} className="inline-flex items-center gap-1 hover:text-fg"><Phone size={13} />{customer.phone}</a>
               )}
             </div>
+            {job.trackingNumber && <div className="mt-0.5 text-sm text-fg-muted">Tracking <span className="tabular select-all text-fg">{job.trackingNumber}</span></div>}
           </div>
           <div className="flex gap-2">
             <LinkButton href={`/jobs/${job.id}/invoice`} size="sm"><Printer size={15} />{isQuote ? 'Estimate' : 'Invoice'}</LinkButton>
@@ -121,6 +123,7 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
               <Field label="Opened"><Input type="date" name="openedOn" defaultValue={job.openedOn} required /></Field>
               <Field label="Completed"><Input type="date" name="completedOn" defaultValue={job.completedOn ?? ''} /></Field>
             </div>
+            <Field label="Tracking number"><Input name="trackingNumber" defaultValue={job.trackingNumber ?? ''} autoComplete="off" /></Field>
             <Field label="Notes"><Textarea name="notes" defaultValue={job.notes ?? ''} /></Field>
           </ActionForm>
             <div className="mt-3 flex justify-between">
@@ -153,12 +156,13 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
                 className="flex w-full items-baseline gap-3 px-4 py-2 text-left hover:bg-hover">
                 <span className="min-w-0 flex-1">
                   <span className="block text-sm">
+                    {l.type === 'part' && <Qty hundredths={partQuantity(l, costs)} />}
                     {l.description}
                     {partNumberOf(l) && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{partNumberOf(l)}</span>}
                   </span>
                   <span className="block text-xs text-fg-subtle">
                     {l.type === 'labor' && l.hoursHundredths != null && `${formatScaled(l.hoursHundredths, 100)} h × ${formatMoney(l.rateCents ?? 0)}`}
-                    {l.type === 'part' && (l.productId ? productLabel(l, costsFor(l)) : costsFor(l).length ? costLabel(costsFor(l)) : estimateLabel(l))}
+                    {l.type === 'part' && (l.productId ? productLabel(costsFor(l)) : costsFor(l).length ? costLabel(costsFor(l)) : estimateLabel(l))}
                   </span>
                 </span>
                 <Money cents={l.amountCents} signed className="text-sm" />
@@ -348,22 +352,19 @@ export function JobView({ detail, number, today, laborRateCents, markupPct, stri
 
 // One cost, or for parts billed from stock, the uses behind the line.
 function costLabel(cs: JobDetail['costs']) {
-  const qty = cs.reduce((a, c) => a + c.quantityHundredths, 0)
   const vendors = [...new Set(cs.map((c) => c.purchase.vendor))].join(', ')
   const source = cs.some((c) => c.useId != null) ? `from stock, ${vendors}` : vendors
-  return `${qty !== 100 ? `${formatQuantity(qty)} × ` : ''}cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} · ${source}`
+  return `cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} · ${source}`
 }
 
 // A product: its parts are different stock items, so only their total cost.
-function productLabel(l: JobLine, cs: JobDetail['costs']) {
-  const qty = l.quantityHundredths != null && l.quantityHundredths !== 100 ? `${formatQuantity(l.quantityHundredths)} × ` : ''
-  return `${qty}product · parts cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} from stock`
+function productLabel(cs: JobDetail['costs']) {
+  return `product · parts cost ${formatMoney(cs.reduce((a, c) => a + c.allocatedCents, 0))} from stock`
 }
 
 function estimateLabel(l: JobLine) {
   if (l.estCostCents == null) return 'no cost recorded'
-  const qty = l.quantityHundredths != null && l.quantityHundredths !== 100 ? `${formatQuantity(l.quantityHundredths)} × ` : ''
-  return `${qty}est. cost ${formatMoney(l.estCostCents)} · not bought yet`
+  return `est. cost ${formatMoney(l.estCostCents)} · not bought yet`
 }
 
 function Total({ label, cents, strong }: { label: string; cents: number; strong?: boolean }) {
@@ -463,16 +464,14 @@ function PartForm({ jobId, edit, quote, today, markupPct, onDone, footer }: {
       <ActionForm id={formId} action={edit ? updatePartAction : addPartAction} resetOnSuccess={adding}
         onSuccess={edit ? onDone : reset} className="space-y-3">
         {line ? <input type="hidden" name="id" value={line.id} /> : <input type="hidden" name="jobId" value={jobId} />}
-        <Field label="Part"><Input name="description" defaultValue={line?.description} placeholder="Vibrant resonator" autoFocus required /></Field>
-        <div className="grid grid-cols-[1fr_6rem] gap-3">
-          <Field label="Part number">
-            <Input name="partNumber" defaultValue={line ? (line.partNumber ?? edit?.cost?.partNumber ?? '') : undefined} placeholder="Optional" autoComplete="off" disabled={fixed} />
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-[11rem_1fr_5rem_10rem_10rem]">
+          <Field label="Part number" className="col-span-2 md:col-span-1">
+            <Input name="partNumber" defaultValue={line ? (line.partNumber ?? edit?.cost?.partNumber ?? '') : undefined} placeholder="Optional" autoComplete="off" autoFocus={!fixed} disabled={fixed} />
           </Field>
-          <Field label="Qty">
+          <Field label="Part" className="col-span-2 md:col-span-1"><Input name="description" defaultValue={line?.description} placeholder="Vibrant resonator" autoFocus={fixed} required /></Field>
+          <Field label="Qty" className="col-span-2 md:col-span-1">
             <Input name="quantity" value={qty} onChange={(e) => { setQty(e.target.value); follow(each, e.target.value) }} inputMode="decimal" required disabled={fixed} />
           </Field>
-        </div>
-        <div className="grid grid-cols-2 gap-3">
           <Field label={estimate ? 'Expected cost each' : 'Cost each'}
             hint={total != null && qtyH !== 100 ? `${formatMoney(total)} for ${formatQuantity(qtyH!)}` : estimate ? 'Not a purchase until you buy it' : adding ? 'Leave empty if the customer supplied it' : undefined}>
             <MoneyInput name="costEach" value={each} onChange={(e) => { setEach(e.target.value); follow(e.target.value, qty) }} disabled={fixed} required={!!line?.purchaseLineId} />
@@ -480,11 +479,13 @@ function PartForm({ jobId, edit, quote, today, markupPct, onDone, footer }: {
           <Field label="Bill customer" hint={`${markupPct}% markup by default`}>
             <MoneyInput name="billed" value={billed} onChange={(e) => { setBilled(e.target.value); setTouched(true) }} />
           </Field>
-          {adding && !quote && <>
+        </div>
+        {adding && !quote && (
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-[1fr_11rem]">
             <Field label="Vendor"><Input name="vendor" placeholder="Summit, RockAuto…" /></Field>
             <Field label="Bought"><Input type="date" name="purchasedOn" defaultValue={today} /></Field>
-          </>}
-        </div>
+          </div>
+        )}
         {adding && quote && <input type="hidden" name="purchasedOn" value={today} />}
         {more && adding && !quote ? (
           <Field label="Paid with"><Input name="method" placeholder="Card, cash…" /></Field>
@@ -635,9 +636,8 @@ function UnbilledCost({ cost, markupPct }: { cost: JobDetail['costs'][number]; m
     <div className="px-4 py-2">
       <div className="flex items-baseline gap-3">
         <span className="min-w-0 flex-1">
-          <span className="block text-sm">{label}</span>
+          <span className="block text-sm"><Qty hundredths={cost.quantityHundredths} />{label}</span>
           <Link href={`/purchases/${cost.purchaseId}`} className="block text-xs text-fg-subtle hover:underline">
-            {cost.quantityHundredths !== 100 && `${formatQuantity(cost.quantityHundredths)} × `}
             {cost.purchase.vendor} · {cost.usedOn ? `from stock ${formatDate(cost.usedOn, { year: false })}` : formatDate(cost.purchase.purchasedOn, { year: false })} · cost {formatMoney(cost.allocatedCents)}
           </Link>
         </span>

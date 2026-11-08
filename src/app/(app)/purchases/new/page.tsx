@@ -11,7 +11,7 @@ export default async function NewPurchasePage({ searchParams }: PageProps<'/purc
   const db = await authedDb()
   const jobId = typeof sp.job === 'string' ? Number(sp.job) : null
   return (
-    <div className="mx-auto max-w-xl">
+    <div>
       <PageHeader title="New purchase" back={jobId ? { href: `/jobs/${jobId}`, label: 'Job' } : sp.stock === '1' ? { href: '/stock', label: 'Stock' } : { href: '/purchases', label: 'Purchases' }} />
       {sp.saved && <Notice tone="good" className="mb-3">Saved. Next one:</Notice>}
       <PurchaseForm

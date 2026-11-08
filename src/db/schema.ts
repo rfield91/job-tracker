@@ -67,6 +67,7 @@ export const jobs = pgTable('jobs', {
   status: text('status').$type<JobStatus>().notNull().default('in_progress'),
   openedOn: date('opened_on').notNull(),
   completedOn: date('completed_on'),
+  trackingNumber: text('tracking_number'),
   notes: text('notes'),
   createdAt: createdAt(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),

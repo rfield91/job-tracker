@@ -5,6 +5,7 @@ import { guessMapping, normalize } from './import'
 import { toCsv } from './csv'
 import { signSession, verifySession } from './auth'
 import { estimateNh, estimateTax } from './tax-estimate'
+import { partQuantity } from './job-lines'
 
 describe('money', () => {
   it('parses the ways amounts get typed', () => {
@@ -119,5 +120,18 @@ describe('tax estimate', () => {
     expect(estimateTax(2026, { profitCents: 30_000, otherIncomeCents: 0, status: 'single' })!.seTaxCents).toBe(0)
     expect(estimateTax(2024, { profitCents: 5_000_000, otherIncomeCents: 0, status: 'single' })).toBeNull()
     expect(estimateNh({ grossIncomeCents: 12_000_000, profitCents: 5_000_000 })).toMatchObject({ bptApplies: true, betMayApply: false, bptUpToCents: 375000 })
+  })
+})
+
+describe('partQuantity', () => {
+  const line = { id: 1, purchaseLineId: null, productId: null, quantityHundredths: null }
+  const cost = { id: 7, useId: null, jobLineId: null, quantityHundredths: 300 }
+  it('defaults to one and prefers the costs behind the line', () => {
+    expect(partQuantity(line, [])).toBe(100)
+    expect(partQuantity({ ...line, purchaseLineId: 7 }, [cost])).toBe(300)
+    expect(partQuantity(line, [{ ...cost, useId: 2, jobLineId: 1 }, { ...cost, useId: 3, jobLineId: 1 }])).toBe(600)
+  })
+  it('counts a product by its own line, not its parts', () => {
+    expect(partQuantity({ ...line, productId: 4, quantityHundredths: 200 }, [{ ...cost, useId: 2, jobLineId: 1 }])).toBe(200)
   })
 })

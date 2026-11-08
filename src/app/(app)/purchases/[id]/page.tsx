@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation'
 import { Pencil, Trash2 } from 'lucide-react'
 import { ActionButton, ActionForm, SubmitButton } from '@/components/forms'
 import { FileInput, Thumb } from '@/components/file-input'
-import { Badge, Card, CardHeader, LinkButton, Money, Notice, PageHeader } from '@/components/ui'
+import { Badge, Card, CardHeader, LinkButton, Money, Notice, PageHeader, Qty } from '@/components/ui'
 import { deletePurchaseAction, uploadReceiptAction } from '@/app/actions/purchases'
 import { deleteFileAction } from '@/app/actions/jobs'
 import { formatDate } from '@/lib/dates'
@@ -23,7 +23,7 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
   if (!d) notFound()
   const { purchase: p } = d
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="space-y-4">
       <PageHeader
         back={{ href: '/purchases', label: 'Purchases' }}
         title={p.vendor}
@@ -43,7 +43,7 @@ export default async function PurchasePage({ params, searchParams }: PageProps<'
             <div key={line.id} className="flex items-start gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <div className="text-sm">
-                  {line.quantityHundredths !== 100 && <span className="text-fg-muted tabular">{formatQuantity(line.quantityHundredths)} × </span>}
+                  <Qty hundredths={line.quantityHundredths} />
                   {line.description || p.vendor}
                   {line.partNumber && <span className="ml-1.5 text-xs text-fg-subtle tabular">#{line.partNumber}</span>}
                 </div>

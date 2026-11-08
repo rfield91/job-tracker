@@ -9,7 +9,7 @@ export default async function NewProductPage() {
   const db = await authedDb()
   const stock = await listStock(db)
   return (
-    <div className="mx-auto max-w-xl">
+    <div className="mx-auto max-w-3xl">
       <PageHeader title="New product" back={{ href: '/products', label: 'Products' }} />
       <ProductForm stock={stock.map(({ key, label, partNumber, quantityHundredths }) => ({ key, label, partNumber, quantityHundredths }))} />
     </div>

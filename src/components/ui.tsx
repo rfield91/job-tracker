@@ -1,6 +1,6 @@
 import Link from 'next/link'
 import type { ComponentProps, ReactNode } from 'react'
-import { formatMoney } from '@/lib/money'
+import { formatMoney, formatQuantity } from '@/lib/money'
 
 export function cx(...parts: (string | false | null | undefined)[]) {
   return parts.filter(Boolean).join(' ')
@@ -29,6 +29,11 @@ export function Button({ variant = 'secondary', size = 'md', className, ...props
 export function LinkButton({ variant = 'secondary', size = 'md', className, ...props }:
   ComponentProps<typeof Link> & { variant?: Variant; size?: keyof typeof buttonSizes }) {
   return <Link {...props} className={cx(buttonClass(variant, size), className)} />
+}
+
+// Goes in front of an item's name, every time, so "1 ×" reads like "3 ×".
+export function Qty({ hundredths }: { hundredths: number }) {
+  return <span className="text-fg-muted tabular">{formatQuantity(hundredths)} × </span>
 }
 
 export function Card({ className, ...props }: ComponentProps<'div'>) {

@@ -73,6 +73,7 @@ export async function saleFromPaymentAction(_: FormState, fd: FormData): Promise
       priceCents: reqMoney(fd, 'price', 'a price'),
       shippingBilledCents: money(fd, 'shippingBilled'),
       shipping: shipping ? { carrier: str(fd, 'carrier'), costCents: shipping } : null,
+      trackingNumber: optStr(fd, 'trackingNumber'),
       notes: optStr(fd, 'notes'),
     })
     jobId = job.id
@@ -96,6 +97,7 @@ export async function quickSaleAction(_: FormState, fd: FormData): Promise<FormS
       quantity: reqInt(fd, 'quantity', 'how many'),
       priceCents: reqMoney(fd, 'price', 'a price'),
       shipping: shipping ? { carrier: str(fd, 'carrier'), costCents: shipping } : null,
+      trackingNumber: optStr(fd, 'trackingNumber'),
       payment: paid ? {
         amountCents: paid,
         method: oneOf(fd, 'method', METHODS, 'other'),

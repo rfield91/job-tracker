@@ -156,6 +156,7 @@ type SaleInput = {
   shippingBilledCents?: number | null
   // The label, as a purchase on the sale.
   shipping?: { carrier: string; costCents: number; method?: string | null } | null
+  trackingNumber?: string | null
   notes?: string | null
 }
 
@@ -173,7 +174,7 @@ async function createSale(t: Db, input: SaleInput) {
     openedOn: input.soldOn,
     notes: input.notes,
   })
-  await t.update(jobs).set({ completedOn: input.soldOn }).where(eq(jobs.id, job.id))
+  await t.update(jobs).set({ completedOn: input.soldOn, trackingNumber: input.trackingNumber?.trim() || null }).where(eq(jobs.id, job.id))
   if (p) {
     await sellProduct(t, job.id, { productId: p.id, quantity: input.quantity, priceCents: input.priceCents, usedOn: input.soldOn })
   } else {

@@ -309,10 +309,10 @@ describe('products', () => {
     }).returning()
     const job = await saleFromPayment(db, p.id, {
       soldOn: '2026-11-04', customer: { name: 'Justin' }, productId: kit.id, quantity: 1, priceCents: 24000,
-      shippingBilledCents: 1850, shipping: { carrier: 'USPS', costCents: 1200 },
+      shippingBilledCents: 1850, shipping: { carrier: 'USPS', costCents: 1200 }, trackingNumber: ' 9400 1000 ',
     })
     const d = (await getJobDetail(db, job.id))!
-    expect(d.job).toMatchObject({ kind: 'sale', status: 'paid', completedOn: '2026-11-04', title: kit.name })
+    expect(d.job).toMatchObject({ kind: 'sale', status: 'paid', completedOn: '2026-11-04', title: kit.name, trackingNumber: '9400 1000' })
     expect(d.lines.map((l) => [l.type, l.description, l.amountCents])).toEqual([['part', kit.name, 24000], ['fee', 'Shipping', 1850]])
     expect(d.totals).toMatchObject({ billedCents: 25850, paidCents: 25850, balanceCents: 0, costCents: 8560 + 1200, feeCents: 780, profitCents: 25850 - 8560 - 1200 - 780 })
     expect(await unmatchedPayments(db)).toHaveLength(0)

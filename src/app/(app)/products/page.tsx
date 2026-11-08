@@ -15,7 +15,7 @@ export default async function ProductsPage() {
   const active = all.filter((p) => p.active)
   const retired = all.filter((p) => !p.active)
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="space-y-4">
       <PageHeader
         title="Products"
         subtitle="Things you sell ready-made. Each lists the stock parts that go into one, so selling it takes them off the shelf and counts their cost on the sale."

@@ -26,7 +26,7 @@ export default async function TaxPage({ searchParams }: PageProps<'/reports/tax'
   const e = w.estimate
   const f = e.federal
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="space-y-4">
       <div className="no-print">
         <PageHeader back={{ href: `/reports?year=${year}`, label: 'Reports' }} title={`Tax worksheet ${year}`}
           subtitle={<YearTabs year={year} thisYear={thisYear} path="/reports/tax" />}

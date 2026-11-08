@@ -2,7 +2,8 @@ import { notFound } from 'next/navigation'
 import { PageHeader } from '@/components/ui'
 import { PrintButton } from '@/components/print-button'
 import { addDays, formatDate } from '@/lib/dates'
-import { formatMoney, formatScaled } from '@/lib/money'
+import { formatMoney, formatQuantity, formatScaled } from '@/lib/money'
+import { partQuantity } from '@/lib/job-lines'
 import { authedDb } from '@/server/session'
 import { getJobDetail, jobNumber, vehicleLabel } from '@/server/jobs'
 import { PURPOSE_LABELS, METHOD_LABELS } from '@/server/payments'
@@ -79,7 +80,7 @@ export default async function InvoicePage({ params }: PageProps<'/jobs/[id]/invo
               {g.rows.map((l) => (
                 <tr key={l.id} className="border-b border-line/60">
                   <td className="py-1.5 pr-2">{l.description}</td>
-                  <td className="py-1.5 text-right tabular">{l.hoursHundredths != null ? `${formatScaled(l.hoursHundredths, 100)} h` : ''}</td>
+                  <td className="py-1.5 text-right tabular">{l.hoursHundredths != null ? `${formatScaled(l.hoursHundredths, 100)} h` : l.type === 'part' ? formatQuantity(partQuantity(l, d.costs)) : ''}</td>
                   <td className="py-1.5 text-right tabular">{l.rateCents != null && l.hoursHundredths != null ? formatMoney(l.rateCents) : ''}</td>
                   <td className="py-1.5 text-right tabular">{formatMoney(l.amountCents)}</td>
                 </tr>

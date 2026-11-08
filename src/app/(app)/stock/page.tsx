@@ -1,10 +1,9 @@
 import Link from 'next/link'
 import { Plus } from 'lucide-react'
 import { ActionButton } from '@/components/forms'
-import { Card, CardHeader, Empty, LinkButton, Money, PageHeader } from '@/components/ui'
+import { Card, CardHeader, Empty, LinkButton, Money, PageHeader, Qty } from '@/components/ui'
 import { returnToStockAction } from '@/app/actions/stock'
 import { formatDate } from '@/lib/dates'
-import { formatQuantity } from '@/lib/money'
 import { allocatedLines } from '@/server/ledger'
 import { authedDb } from '@/server/session'
 import { jobOptions } from '@/server/pickers'
@@ -27,7 +26,7 @@ export default async function StockPage() {
   const costByUse = new Map((await allocatedLines(db, { stockOrigin: true }))
     .filter((l) => l.useId != null).map((l) => [l.useId!, l.allocatedCents]))
   return (
-    <div className="mx-auto max-w-2xl space-y-4">
+    <div className="space-y-4">
       <PageHeader
         title="Stock"
         subtitle="Materials bought ahead for future jobs. Their cost counts when you put them on a job or use them in the shop, so what’s left at year end carries over to next year."
@@ -54,7 +53,7 @@ export default async function StockPage() {
               <div key={use.id} className="flex items-center gap-3 px-4 py-2.5">
                 <span className="w-14 shrink-0 text-xs text-fg-subtle">{formatDate(use.usedOn, { year: false })}</span>
                 <span className="min-w-0 flex-1 text-sm">
-                  <span className="text-fg-muted tabular">{formatQuantity(use.quantityHundredths)} × </span>
+                  <Qty hundredths={use.quantityHundredths} />
                   <Link href={`/purchases/${purchase.id}`} className="hover:underline">{line.description || purchase.vendor}</Link>
                   <span className="block text-xs text-fg-subtle">{category.name}{use.note && ` · ${use.note}`}</span>
                 </span>

@@ -24,7 +24,7 @@ export default async function MonthPage({ searchParams }: PageProps<'/reports/mo
   const year = month.slice(0, 4)
   const costs = s.cogsCents + s.expenseCents + s.feeCents
   return (
-    <div className="mx-auto max-w-3xl space-y-4">
+    <div className="space-y-4">
       <PageHeader back={{ href: `/reports?year=${year}`, label: `Reports ${year}` }} title={`${monthName(month, true)} ${year}`}
         actions={<>
           <Link href={`/reports/month?m=${shift(month, -1)}`} className="inline-flex h-9 items-center rounded-lg px-2 text-fg-muted hover:bg-hover hover:text-fg" aria-label="Previous month"><ChevronLeft size={18} /></Link>
